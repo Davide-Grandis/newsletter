@@ -1,4 +1,5 @@
 import { Navigate, NavLink, Route, Routes } from 'react-router-dom';
+import { useQuery } from '@tanstack/react-query';
 import { AuthProvider, useAuth } from './auth';
 import Login from './pages/Login';
 import Dashboard from './pages/Dashboard';
@@ -35,9 +36,35 @@ function RequireAuth() {
 
 import { Outlet, useNavigate } from 'react-router-dom';
 
+interface Me {
+  email: string | null;
+  name: string | null;
+  protected_by_access: boolean;
+}
+
 function Layout() {
   const { logout } = useAuth();
   const nav = useNavigate();
+  // /api/me is unauthenticated and reads the Cloudflare Access identity
+  // headers the edge injects when the app is behind an Access application.
+  const me = useQuery({
+    queryKey: ['me'],
+    queryFn: () => fetch('/api/me').then((r) => r.json() as Promise<Me>),
+    staleTime: 5 * 60_000,
+  });
+
+  function onLogout() {
+    logout();
+    if (me.data?.protected_by_access) {
+      // Ends the Cloudflare Access session as well; redirects back to the app.
+      window.location.href = '/cdn-cgi/access/logout';
+    } else {
+      nav('/login');
+    }
+  }
+
+  const display = me.data?.name?.trim() || me.data?.email || null;
+
   return (
     <div className="min-h-full flex flex-col">
       <header className="border-b bg-white">
@@ -49,12 +76,28 @@ function Layout() {
             <NavLink to="/campaigns" className={navCls}>Campaigns</NavLink>
             <NavLink to="/bounces" className={navCls}>Bounces</NavLink>
           </nav>
-          <button
-            onClick={() => { logout(); nav('/login'); }}
-            className="ml-auto text-sm text-slate-500 hover:text-slate-900"
-          >
-            Sign out
-          </button>
+          <div className="ml-auto flex items-center gap-3 text-sm">
+            {display && (
+              <span
+                className="flex items-center gap-2 text-slate-600"
+                title={me.data?.email ?? ''}
+              >
+                <span
+                  aria-hidden
+                  className="w-6 h-6 rounded-full bg-slate-900 text-white text-xs flex items-center justify-center font-medium"
+                >
+                  {display.slice(0, 1).toUpperCase()}
+                </span>
+                <span className="hidden sm:inline">{display}</span>
+              </span>
+            )}
+            <button
+              onClick={onLogout}
+              className="text-slate-500 hover:text-slate-900 border rounded px-2 py-1"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
       <main className="flex-1 max-w-6xl w-full mx-auto px-4 py-6">

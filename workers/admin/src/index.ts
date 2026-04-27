@@ -25,6 +25,19 @@ export default {
       return Response.json({ ok: true });
     }
 
+    // Identity probe: reflects the Cloudflare Access headers the edge injects
+    // when the worker is published behind an Access application. No bearer
+    // token required — Access already authenticated the request.
+    if (req.method === 'GET' && url.pathname === '/api/me') {
+      const email = req.headers.get('cf-access-authenticated-user-email');
+      const name = req.headers.get('cf-access-authenticated-user-name');
+      return Response.json({
+        email: email ?? null,
+        name: name ?? null,
+        protected_by_access: Boolean(email),
+      });
+    }
+
     if (url.pathname.startsWith('/api/')) {
       if (req.headers.get('authorization') !== `Bearer ${env.ADMIN_TOKEN}`) {
         return Response.json({ error: 'unauthorized' }, { status: 401 });
