@@ -9,6 +9,16 @@ TRACKING_BASE_URL = "https://track.yourdomain.com"
 BOUNCE_DOMAIN = "yourdomain.com"
 MAX_RAW_BYTES = "39000000"   # ~40 MB safety cap
 
+# Warmup schedule. Leave WARMUP_START_DATE empty to disable caps entirely.
+# Weekly caps step through WARMUP_SCHEDULE; once exhausted, WARMUP_TARGET_WEEKLY
+# is the steady-state ceiling. Daily caps are 5K (weeks 0-4) then 10K (weeks 5+).
+WARMUP_START_DATE = ""                                    # e.g. "2026-01-06"
+WARMUP_TARGET_WEEKLY = "50000"
+WARMUP_SCHEDULE = "[500, 1500, 5000, 12000, 25000, 40000]"
+WARMUP_DAILY_CAP_EARLY = "5000"
+WARMUP_DAILY_CAP_LATE = "10000"
+WARMUP_LATE_START_WEEK = "5"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "newsletter_db"
@@ -21,6 +31,11 @@ bucket_name = "newsletter-archive"
 [[send_email]]
 name = "SEND_EMAIL"
 # allowed_destination_addresses = []   # leave empty for any verified destination
+
+# Producer binding — used to re-enqueue overflow when a daily/weekly cap is hit.
+[[queues.producers]]
+binding = "QUEUE"
+queue = "newsletter-queue"
 
 [[queues.consumers]]
 queue = "newsletter-queue"

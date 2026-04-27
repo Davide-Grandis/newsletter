@@ -4,10 +4,20 @@
 // bearer-token-authenticated JSON API under /api/* for it (and curl/scripts)
 // to call. Anything that is not /api/* falls through to the static assets.
 
+import { readWarmupConfig, currentWindow } from '../../../shared/warmup';
+
 export interface Env {
   DB: D1Database;
   ASSETS: Fetcher;
   ADMIN_TOKEN: string;
+  // Warmup vars — kept in sync with the consumer worker so the admin GUI can
+  // show the current daily/weekly caps and how much has been used.
+  WARMUP_START_DATE?: string;
+  WARMUP_TARGET_WEEKLY?: string;
+  WARMUP_SCHEDULE?: string;
+  WARMUP_DAILY_CAP_EARLY?: string;
+  WARMUP_DAILY_CAP_LATE?: string;
+  WARMUP_LATE_START_WEEK?: string;
 }
 
 interface SubscriberPatch {
@@ -264,6 +274,39 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       .bind(...(since.startsWith('datetime') ? [limit] : [since, limit]))
       .all();
     return Response.json({ items: results ?? [] });
+  }
+
+  // -------- warmup quota --------
+
+  if (m === 'GET' && p === '/api/quota') {
+    const cfg = readWarmupConfig(env as unknown as Record<string, string | undefined>);
+    const win = currentWindow(cfg, new Date());
+    if (!win) {
+      return Response.json({ enabled: false, target: cfg.targetWeekly });
+    }
+    const dayRow = await env.DB
+      .prepare("SELECT COUNT(*) AS n FROM sends WHERE status = 'sent' AND sent_at >= ?")
+      .bind(win.dayStartSql)
+      .first<{ n: number }>();
+    const weekRow = await env.DB
+      .prepare("SELECT COUNT(*) AS n FROM sends WHERE status = 'sent' AND sent_at >= ?")
+      .bind(win.weekStartSql)
+      .first<{ n: number }>();
+    const dailyUsed = dayRow?.n ?? 0;
+    const weeklyUsed = weekRow?.n ?? 0;
+    return Response.json({
+      enabled: true,
+      weekIndex: win.weekIndex,
+      dailyCap: win.dailyCap,
+      dailyUsed,
+      dailyRemaining: Math.max(0, win.dailyCap - dailyUsed),
+      weeklyCap: win.weeklyCap,
+      weeklyUsed,
+      weeklyRemaining: Math.max(0, win.weeklyCap - weeklyUsed),
+      target: cfg.targetWeekly,
+      windowStart: win.weekStartSql,
+      dayWindowStart: win.dayStartSql,
+    });
   }
 
   // -------- stats / dashboard --------

@@ -106,3 +106,19 @@ export interface TimeseriesRow {
   type: string;
   n: number;
 }
+
+export type Quota =
+  | { enabled: false; target: number }
+  | {
+      enabled: true;
+      weekIndex: number;
+      dailyCap: number;
+      dailyUsed: number;
+      dailyRemaining: number;
+      weeklyCap: number;
+      weeklyUsed: number;
+      weeklyRemaining: number;
+      target: number;
+      windowStart: string;
+      dayWindowStart: string;
+    };

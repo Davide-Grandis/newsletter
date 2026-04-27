@@ -4,26 +4,70 @@ import { getAttachmentBytes } from '../../../shared/attachments';
 import { getCampaign, getCampaignAttachments, recordSendSuccess, recordSendFailure } from '../../../shared/db';
 import { instrumentHtml, unsubscribeUrl, signDownloadUrl } from '../../../shared/tracking';
 import type { QueueMessage } from '../../../shared/types';
+import { readWarmupConfig, currentWindow, delayUntilNextWindow } from '../../../shared/warmup';
 
 export interface Env {
   DB: D1Database;
   ARCHIVE: R2Bucket;
   SEND_EMAIL: SendEmail;
+  QUEUE: Queue<QueueMessage>;
   FROM_ADDRESS: string;
   TRACKING_BASE_URL: string;
   BOUNCE_DOMAIN: string;
   MAX_RAW_BYTES: string;
   LINK_SIGNING_KEY: string;
   ATTACHMENT_SIGNING_KEY: string;
+  // Warmup vars (all optional; if WARMUP_START_DATE is unset, no caps apply)
+  WARMUP_START_DATE?: string;
+  WARMUP_TARGET_WEEKLY?: string;
+  WARMUP_SCHEDULE?: string;
+  WARMUP_DAILY_CAP_EARLY?: string;
+  WARMUP_DAILY_CAP_LATE?: string;
+  WARMUP_LATE_START_WEEK?: string;
 }
 
 export default {
   async queue(batch: MessageBatch<QueueMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // Cache campaign + attachments per campaignId for the lifetime of this batch.
+    // Cache campaign + attachments per batch lifetime.
     const cache = new Map<string, { campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>; parts: AttachmentPart[] }>();
+
+    // Warmup: compute caps once per invocation and track local consumption so
+    // multiple messages in the same MessageBatch respect the same budget.
+    const cfg = readWarmupConfig(env as unknown as Record<string, string | undefined>);
+    const win = currentWindow(cfg, new Date());
+    let dailyRemaining = Number.POSITIVE_INFINITY;
+    let weeklyRemaining = Number.POSITIVE_INFINITY;
+    if (win) {
+      const [dayCount, weekCount] = await Promise.all([
+        countSendsSince(env.DB, win.dayStartSql),
+        countSendsSince(env.DB, win.weekStartSql),
+      ]);
+      dailyRemaining = Math.max(0, win.dailyCap - dayCount);
+      weeklyRemaining = Math.max(0, win.weeklyCap - weekCount);
+    }
 
     for (const msg of batch.messages) {
       const { campaignId, batch: recipients } = msg.body;
+
+      // Warmup gate: if no capacity, re-queue with delay until next window.
+      if (win) {
+        const remaining = Math.min(dailyRemaining, weeklyRemaining);
+        if (remaining <= 0) {
+          const delaySeconds = delayUntilNextWindow(win, dailyRemaining, weeklyRemaining);
+          msg.retry({ delaySeconds });
+          continue;
+        }
+        // Partial capacity: split this message and re-enqueue the remainder.
+        if (recipients.length > remaining) {
+          const overflow = recipients.splice(remaining);
+          const delaySeconds = delayUntilNextWindow(win, 0, weeklyRemaining - remaining);
+          await env.QUEUE.send(
+            { campaignId, batch: overflow },
+            { delaySeconds },
+          );
+        }
+      }
+
       try {
         let entry = cache.get(campaignId);
         if (!entry) {
@@ -88,6 +132,9 @@ export default {
             const email = new EmailMessage(fromAddr, r.email, raw);
             await env.SEND_EMAIL.send(email);
             await recordSendSuccess(env.DB, campaignId, r.subscriberId, messageId);
+            // Track warmup consumption for subsequent messages in this batch.
+            dailyRemaining--;
+            weeklyRemaining--;
           } catch (err) {
             await recordSendFailure(env.DB, campaignId, r.subscriberId, (err as Error).message);
           }
@@ -139,4 +186,12 @@ function quoteName(name: string): string {
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+async function countSendsSince(db: D1Database, sinceUtc: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM sends WHERE status = 'sent' AND sent_at >= ?")
+    .bind(sinceUtc)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
 }
