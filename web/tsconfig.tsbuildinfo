@@ -1,1 +1,0 @@
-{"root":["./src/app.tsx","./src/api.ts","./src/auth.tsx","./src/main.tsx","./src/pages/bounces.tsx","./src/pages/campaigndetail.tsx","./src/pages/campaigns.tsx","./src/pages/dashboard.tsx","./src/pages/login.tsx","./src/pages/subscribers.tsx","./vite.config.ts"],"version":"5.9.3"}

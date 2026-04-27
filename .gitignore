@@ -9,3 +9,4 @@ workers/admin/public/
 
 # vite build cache
 web/dist/
+web/tsconfig.tsbuildinfo
