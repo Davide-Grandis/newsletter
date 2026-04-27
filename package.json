@@ -1,0 +1,20 @@
+{
+  "name": "newsletter",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "deploy:all": "for w in ingest consumer tracker bounce cleanup admin; do (cd workers/$w && wrangler deploy) || exit 1; done",
+    "db:apply": "wrangler d1 execute newsletter_db --file=db/schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20240925.0",
+    "typescript": "^5.5.4",
+    "wrangler": "^3.78.0"
+  },
+  "dependencies": {
+    "mimetext": "^3.0.24",
+    "postal-mime": "^2.2.7"
+  }
+}

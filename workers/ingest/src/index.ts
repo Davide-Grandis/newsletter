@@ -1,0 +1,174 @@
+import PostalMime from 'postal-mime';
+import {
+  validateAttachments,
+  sanitizeFilename,
+  sha256Hex,
+  putAttachment,
+  r2KeyForAttachment,
+  type AttachmentInput,
+  type AttachmentLimits,
+} from '../../../shared/attachments';
+import { iterateActiveSubscribers } from '../../../shared/db';
+import type { QueueMessage, Recipient } from '../../../shared/types';
+
+export interface Env {
+  DB: D1Database;
+  ARCHIVE: R2Bucket;
+  QUEUE: Queue<QueueMessage>;
+  ALLOWED_AUTHORS: string;
+  BATCH_SIZE: string;
+  MAX_ATTACHMENT_BYTES: string;
+  MAX_TOTAL_ATTACHMENT_BYTES: string;
+  MAX_ATTACHMENT_COUNT: string;
+  ALLOWED_MIME: string;
+  BLOCKED_EXTENSIONS: string;
+  ATTACHMENT_LINK_THRESHOLD_BYTES: string;
+}
+
+export default {
+  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+    // 1. Author allow-list + auth check
+    const from = (message.from ?? '').toLowerCase();
+    const allowed = env.ALLOWED_AUTHORS.split(',').map((s) => s.trim().toLowerCase());
+    if (!allowed.includes(from)) {
+      message.setReject('Sender not authorized');
+      return;
+    }
+    const authResults = (message.headers.get('authentication-results') ?? '').toLowerCase();
+    if (!/spf=pass/.test(authResults) || !/dkim=pass/.test(authResults)) {
+      message.setReject('SPF/DKIM verification failed');
+      return;
+    }
+
+    // 2. Read raw MIME (also archived to R2)
+    const raw = new Uint8Array(await streamToArrayBuffer(message.raw));
+    const parsed = await PostalMime.parse(raw);
+
+    const subject = parsed.subject ?? '(no subject)';
+    const html = parsed.html ?? '';
+    const text = parsed.text ?? htmlToText(html);
+
+    // 3. Validate attachments
+    const limits: AttachmentLimits = {
+      maxBytes: Number(env.MAX_ATTACHMENT_BYTES),
+      maxTotalBytes: Number(env.MAX_TOTAL_ATTACHMENT_BYTES),
+      maxCount: Number(env.MAX_ATTACHMENT_COUNT),
+      allowedMime: env.ALLOWED_MIME.split(',').map((s) => s.trim()),
+      blockedExt: env.BLOCKED_EXTENSIONS.split(',').map((s) => s.trim().toLowerCase()),
+    };
+    const inputs: AttachmentInput[] = (parsed.attachments ?? []).map((a) => ({
+      filename: sanitizeFilename(a.filename ?? 'file'),
+      contentType: a.mimeType ?? 'application/octet-stream',
+      bytes: toUint8(a.content),
+      contentId: a.contentId?.replace(/[<>]/g, ''),
+      disposition: (a.disposition === 'inline' ? 'inline' : 'attachment') as 'inline' | 'attachment',
+    }));
+    try {
+      validateAttachments(inputs, limits);
+    } catch (e) {
+      message.setReject(`Attachment rejected: ${(e as Error).message}`);
+      return;
+    }
+
+    // 4. Persist campaign + archive raw
+    const campaignId = crypto.randomUUID();
+    const totalAttBytes = inputs.reduce((s, a) => s + a.bytes.byteLength, 0);
+    const linkMode = totalAttBytes > Number(env.ATTACHMENT_LINK_THRESHOLD_BYTES);
+
+    await env.ARCHIVE.put(`campaigns/${campaignId}/raw.eml`, raw);
+    await env.DB
+      .prepare(
+        'INSERT INTO campaigns (id, subject, html, text, sent_by, status, attachment_count, attachment_total_bytes, link_mode) ' +
+          "VALUES (?, ?, ?, ?, ?, 'sending', ?, ?, ?)",
+      )
+      .bind(campaignId, subject, html, text, from, inputs.length, totalAttBytes, linkMode ? 1 : 0)
+      .run();
+
+    // 5. Store attachments in R2 + D1 (deduped by sha256 within this campaign)
+    const seen = new Set<string>();
+    for (const a of inputs) {
+      const sha = await sha256Hex(a.bytes);
+      const key = r2KeyForAttachment(campaignId, sha);
+      if (!seen.has(sha)) {
+        await putAttachment(env.ARCHIVE, key, a.bytes, {
+          filename: a.filename,
+          contentType: a.contentType,
+          contentId: a.contentId,
+        });
+        seen.add(sha);
+      }
+      await env.DB
+        .prepare(
+          'INSERT INTO attachments (campaign_id, r2_key, filename, content_type, size, sha256, content_id, disposition) ' +
+            'VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        )
+        .bind(
+          campaignId,
+          key,
+          a.filename,
+          a.contentType,
+          a.bytes.byteLength,
+          sha,
+          a.contentId ?? null,
+          a.disposition,
+        )
+        .run();
+    }
+
+    // 6. Enqueue subscriber batches
+    const batchSize = Math.max(1, Number(env.BATCH_SIZE));
+    let total = 0;
+    let buf: Recipient[] = [];
+    const flush = async () => {
+      if (buf.length === 0) return;
+      await env.QUEUE.send({ campaignId, batch: buf });
+      total += buf.length;
+      buf = [];
+    };
+    for await (const s of iterateActiveSubscribers(env.DB)) {
+      buf.push({ subscriberId: s.id, email: s.email, name: s.name ?? undefined, token: s.token });
+      if (buf.length >= batchSize) await flush();
+    }
+    await flush();
+
+    await env.DB
+      .prepare('UPDATE campaigns SET total_recipients = ? WHERE id = ?')
+      .bind(total, campaignId)
+      .run();
+  },
+};
+
+async function streamToArrayBuffer(stream: ReadableStream<Uint8Array>): Promise<ArrayBuffer> {
+  const reader = stream.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (value) {
+      chunks.push(value);
+      total += value.byteLength;
+    }
+  }
+  const out = new Uint8Array(total);
+  let off = 0;
+  for (const c of chunks) {
+    out.set(c, off);
+    off += c.byteLength;
+  }
+  return out.buffer;
+}
+
+function toUint8(content: ArrayBuffer | Uint8Array | string): Uint8Array {
+  if (typeof content === 'string') return new TextEncoder().encode(content);
+  if (content instanceof Uint8Array) return content;
+  return new Uint8Array(content);
+}
+
+function htmlToText(html: string): string {
+  return html.replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<[^>]+>/g, '')
+    .replace(/\s+\n/g, '\n')
+    .trim();
+}

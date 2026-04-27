@@ -1,0 +1,10 @@
+name = "newsletter-admin"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "newsletter_db"
+database_id = "REPLACE_WITH_D1_ID"
+
+# Secret: ADMIN_TOKEN

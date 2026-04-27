@@ -1,0 +1,31 @@
+name = "newsletter-consumer"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+FROM_ADDRESS = "Newsletter <newsletter@yourdomain.com>"
+TRACKING_BASE_URL = "https://track.yourdomain.com"
+BOUNCE_DOMAIN = "yourdomain.com"
+MAX_RAW_BYTES = "39000000"   # ~40 MB safety cap
+
+[[d1_databases]]
+binding = "DB"
+database_name = "newsletter_db"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "newsletter-archive"
+
+[[send_email]]
+name = "SEND_EMAIL"
+# allowed_destination_addresses = []   # leave empty for any verified destination
+
+[[queues.consumers]]
+queue = "newsletter-queue"
+max_batch_size = 10
+max_batch_timeout = 5
+max_concurrency = 5
+max_retries = 3
+dead_letter_queue = "newsletter-dlq"

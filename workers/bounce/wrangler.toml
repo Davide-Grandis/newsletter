@@ -1,0 +1,20 @@
+name = "newsletter-bounce"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+compatibility_flags = ["nodejs_compat"]
+
+[vars]
+HARD_BOUNCE_THRESHOLD = "1"   # mark bounced after N hard bounces
+SOFT_BOUNCE_THRESHOLD = "5"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "newsletter_db"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "newsletter-archive"
+
+# Email Routing rule:
+#   bounce+*@yourdomain.com  -> Worker `newsletter-bounce`

@@ -1,0 +1,2 @@
+-- Initial migration: see ../schema.sql for the canonical schema.
+-- Apply with: wrangler d1 migrations apply newsletter_db

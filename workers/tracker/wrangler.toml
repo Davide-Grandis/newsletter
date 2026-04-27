@@ -1,0 +1,19 @@
+name = "newsletter-tracker"
+main = "src/index.ts"
+compatibility_date = "2025-01-15"
+
+# Set a custom domain route, e.g. track.yourdomain.com/*
+# routes = [{ pattern = "track.yourdomain.com/*", custom_domain = true }]
+
+[[d1_databases]]
+binding = "DB"
+database_name = "newsletter_db"
+database_id = "REPLACE_WITH_D1_ID"
+
+[[r2_buckets]]
+binding = "ARCHIVE"
+bucket_name = "newsletter-archive"
+
+# Secrets (set via `wrangler secret put`):
+#   LINK_SIGNING_KEY
+#   ATTACHMENT_SIGNING_KEY
