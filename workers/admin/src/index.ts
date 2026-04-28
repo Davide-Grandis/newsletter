@@ -64,6 +64,59 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
 
+  // -------- authors (ingest allow-list) --------
+
+  if (m === 'GET' && p === '/api/authors') {
+    const { results } = await env.DB
+      .prepare('SELECT email, name, created_at FROM authors ORDER BY created_at DESC')
+      .all<{ email: string; name: string | null; created_at: string }>();
+    return Response.json({ items: results ?? [] });
+  }
+
+  if (m === 'POST' && p === '/api/authors') {
+    const { email, name } = await req.json<{ email: string; name?: string | null }>();
+    const norm = (email ?? '').trim().toLowerCase();
+    if (!norm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(norm)) {
+      return Response.json({ error: 'valid email required' }, { status: 400 });
+    }
+    try {
+      await env.DB
+        .prepare('INSERT INTO authors (email, name) VALUES (?, ?)')
+        .bind(norm, name ?? null)
+        .run();
+    } catch (err) {
+      const msg = (err as Error).message;
+      if (/UNIQUE|PRIMARY KEY/i.test(msg)) {
+        return Response.json({ error: 'author already exists' }, { status: 409 });
+      }
+      throw err;
+    }
+    return Response.json({ email: norm, name: name ?? null }, { status: 201 });
+  }
+
+  const authorMatch = /^\/api\/authors\/(.+)$/.exec(p);
+  if (authorMatch) {
+    const email = decodeURIComponent(authorMatch[1]!).toLowerCase();
+    if (m === 'DELETE') {
+      const res = await env.DB
+        .prepare('DELETE FROM authors WHERE email = ?')
+        .bind(email)
+        .run();
+      if (!res.meta?.changes) {
+        return Response.json({ error: 'not found' }, { status: 404 });
+      }
+      return Response.json({ ok: true });
+    }
+    if (m === 'PATCH') {
+      const body = await req.json<{ name?: string | null }>();
+      await env.DB
+        .prepare('UPDATE authors SET name = ? WHERE email = ?')
+        .bind(body.name ?? null, email)
+        .run();
+      return Response.json({ ok: true });
+    }
+  }
+
   // -------- subscribers --------
 
   if (m === 'GET' && p === '/api/subscribers') {

@@ -54,10 +54,18 @@ done
 grep database_id workers/*/wrangler.toml
 ```
 
-## 5. Apply schema
+## 5. Apply schema and seed the first author
 
 ```bash
 npx wrangler d1 execute newsletter_db --remote --file=db/schema.sql
+```
+
+Authors are managed in D1 (replaces the old `ALLOWED_AUTHORS` env var).
+Seed at least one row so the ingest worker accepts the first inbound mail:
+
+```bash
+npx wrangler d1 execute newsletter_db --remote \
+  --command "INSERT INTO authors (email, name) VALUES ('davideg@cloudflare.com', 'Davide Grandis');"
 ```
 
 ## 6. Set secrets

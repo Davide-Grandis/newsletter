@@ -63,6 +63,15 @@ Apply schema:
 npx wrangler d1 execute newsletter_db --remote --file=db/schema.sql
 ```
 
+Seed the first author so the ingest worker will accept your inbound mail
+(every additional author can be added later via the admin GUI's *Authors*
+page or `POST /api/authors`):
+
+```bash
+npx wrangler d1 execute newsletter_db --remote \
+  --command "INSERT INTO authors (email, name) VALUES ('davideg@cloudflare.com', 'Davide Grandis');"
+```
+
 ### 1.2 Queues
 
 ```bash

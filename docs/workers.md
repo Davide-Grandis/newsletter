@@ -22,8 +22,11 @@ be sent — so this is the security boundary of the system.
 
 ```ts
 const from = (message.from ?? '').toLowerCase();
-const allowed = env.ALLOWED_AUTHORS.split(',').map(s => s.trim().toLowerCase());
-if (!allowed.includes(from)) { message.setReject('Sender not authorized'); return; }
+const row = await env.DB
+  .prepare('SELECT 1 AS ok FROM authors WHERE email = ? LIMIT 1')
+  .bind(from)
+  .first();
+if (!row) { message.setReject('Sender not authorized'); return; }
 const authResults = (message.headers.get('authentication-results') ?? '').toLowerCase();
 if (!/spf=pass/.test(authResults) || !/dkim=pass/.test(authResults)) {
   message.setReject('SPF/DKIM verification failed');
@@ -31,10 +34,12 @@ if (!/spf=pass/.test(authResults) || !/dkim=pass/.test(authResults)) {
 }
 ```
 
-Two gates: the From header must be in `ALLOWED_AUTHORS`, **and** Cloudflare's
-own `Authentication-Results` header must show `spf=pass` and `dkim=pass`.
-The allow-list alone is not enough because From is forgeable; SPF + DKIM
-prove the message really originated from the claimed domain.
+Two gates: the From header must match a row in the D1 `authors` table
+(case-insensitive — managed via the admin worker's `/api/authors` CRUD or
+the GUI's *Authors* page), **and** Cloudflare's own `Authentication-Results`
+header must show `spf=pass` and `dkim=pass`. The allow-list alone is not
+enough because From is forgeable; SPF + DKIM prove the message really
+originated from the claimed domain.
 
 **2. Read and parse the raw MIME** with `postal-mime` to get subject, html,
 text, and `attachments[]` (each with filename, mimeType, bytes,

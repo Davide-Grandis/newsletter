@@ -15,7 +15,6 @@ export interface Env {
   DB: D1Database;
   ARCHIVE: R2Bucket;
   QUEUE: Queue<QueueMessage>;
-  ALLOWED_AUTHORS: string;
   BATCH_SIZE: string;
   MAX_ATTACHMENT_BYTES: string;
   MAX_TOTAL_ATTACHMENT_BYTES: string;
@@ -28,9 +27,14 @@ export interface Env {
 export default {
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
     // 1. Author allow-list + auth check
+    //    The allow-list lives in the D1 `authors` table and is managed via the
+    //    admin worker (CRUD endpoints / GUI). The lookup is case-insensitive.
     const from = (message.from ?? '').toLowerCase();
-    const allowed = env.ALLOWED_AUTHORS.split(',').map((s) => s.trim().toLowerCase());
-    if (!allowed.includes(from)) {
+    const authorRow = await env.DB
+      .prepare('SELECT 1 AS ok FROM authors WHERE email = ? LIMIT 1')
+      .bind(from)
+      .first<{ ok: number }>();
+    if (!authorRow) {
       message.setReject('Sender not authorized');
       return;
     }

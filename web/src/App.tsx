@@ -7,6 +7,7 @@ import Subscribers from './pages/Subscribers';
 import Campaigns from './pages/Campaigns';
 import CampaignDetail from './pages/CampaignDetail';
 import Bounces from './pages/Bounces';
+import Authors from './pages/Authors';
 
 export default function App() {
   return (
@@ -20,6 +21,7 @@ export default function App() {
             <Route path="campaigns" element={<Campaigns />} />
             <Route path="campaigns/:id" element={<CampaignDetail />} />
             <Route path="bounces" element={<Bounces />} />
+            <Route path="authors" element={<Authors />} />
           </Route>
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -75,6 +77,7 @@ function Layout() {
             <NavLink to="/subscribers" className={navCls}>Subscribers</NavLink>
             <NavLink to="/campaigns" className={navCls}>Campaigns</NavLink>
             <NavLink to="/bounces" className={navCls}>Bounces</NavLink>
+            <NavLink to="/authors" className={navCls}>Authors</NavLink>
           </nav>
           <div className="ml-auto flex items-center gap-3 text-sm">
             {display && (

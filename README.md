@@ -186,7 +186,7 @@ Author ──▶ Email Routing ──▶ Ingest Worker (Email handler)
 
 ### a) `ingest-worker` (Email Worker)
 - `email(message, env, ctx)` handler.
-- Verify sender ∈ `ALLOWED_AUTHORS`; require `Authentication-Results` SPF=pass, DKIM=pass.
+- Verify sender exists in the D1 `authors` table (managed via the admin worker); require `Authentication-Results` SPF=pass, DKIM=pass.
 - Parse with `postal-mime` → subject, html, text, `attachments[]`.
 - **Attachment handling**:
   - Validate count ≤ `MAX_ATTACHMENT_COUNT`, per-file ≤ `MAX_ATTACHMENT_BYTES`, total ≤ `MAX_TOTAL_ATTACHMENT_BYTES`.
@@ -197,7 +197,7 @@ Author ──▶ Email Routing ──▶ Ingest Worker (Email handler)
 - Insert `campaigns` (status=`sending`) and `attachments` rows.
 - Stream active subscribers in pages, chunk into batches of `BATCH_SIZE`, `env.QUEUE.send(...)`.
 - Reply NDR via `message.setReject` if unauthorized or oversized.
-- Bindings: `DB`, `QUEUE`, `ARCHIVE`, vars `ALLOWED_AUTHORS`, `BATCH_SIZE`, attachment limits.
+- Bindings: `DB`, `QUEUE`, `ARCHIVE`, vars `BATCH_SIZE`, attachment limits.
 
 ### b) `consumer-worker` (Queue consumer)
 - `queue(batch, env)` handler.
@@ -258,7 +258,7 @@ newsletter/
 ```
 
 ## 8. Configuration (vars / secrets)
-- Vars: `ALLOWED_AUTHORS`, `FROM_ADDRESS`, `TRACKING_BASE_URL`, `BOUNCE_DOMAIN`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`.
+- Vars: `FROM_ADDRESS`, `TRACKING_BASE_URL`, `BOUNCE_DOMAIN`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`.
 - Secrets (`wrangler secret put`): `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`, `ADMIN_TOKEN`.
 
 ## 9. Key Flows

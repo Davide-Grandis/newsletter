@@ -2,6 +2,14 @@
 
 PRAGMA foreign_keys = ON;
 
+-- Authors authorized to send newsletters by emailing the ingest worker.
+-- Inbound email's `From:` header is checked against this table (case-insensitive).
+CREATE TABLE IF NOT EXISTS authors (
+  email      TEXT PRIMARY KEY COLLATE NOCASE,
+  name       TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE TABLE IF NOT EXISTS subscribers (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   email           TEXT NOT NULL UNIQUE,

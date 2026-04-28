@@ -107,6 +107,12 @@ export interface TimeseriesRow {
   n: number;
 }
 
+export interface Author {
+  email: string;
+  name: string | null;
+  created_at: string;
+}
+
 export type Quota =
   | { enabled: false; target: number }
   | {
