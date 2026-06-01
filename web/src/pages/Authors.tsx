@@ -10,16 +10,21 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
     queryFn: () => api<{ items: Author[] }>(base),
   });
 
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['authors', newsletterId] });
+    qc.invalidateQueries({ queryKey: ['newsletter', newsletterId] });
+  };
+
   const add = useMutation({
     mutationFn: (body: { email: string; name?: string | null }) =>
       api(base, { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors', newsletterId] }),
+    onSuccess: refresh,
   });
 
   const remove = useMutation({
     mutationFn: (email: string) =>
       api(`${base}/${encodeURIComponent(email)}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors', newsletterId] }),
+    onSuccess: refresh,
   });
 
   const [email, setEmail] = useState('');

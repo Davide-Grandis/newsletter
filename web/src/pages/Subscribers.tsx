@@ -41,10 +41,15 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
     setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
   }
 
+  const refresh = () => {
+    qc.invalidateQueries({ queryKey: ['subs', newsletterId] });
+    qc.invalidateQueries({ queryKey: ['newsletter', newsletterId] });
+  };
+
   const add = useMutation({
     mutationFn: (vars: { email: string; name?: string }) =>
       api(base, { method: 'POST', body: JSON.stringify(vars) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
+    onSuccess: refresh,
   });
 
   const upload = useMutation({
@@ -57,7 +62,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
     },
     onSuccess: (res) => {
       setImportResult(res);
-      qc.invalidateQueries({ queryKey: ['subs', newsletterId] });
+      refresh();
     },
   });
 
@@ -167,12 +172,12 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         <table className="w-full table-fixed text-sm">
           <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
-              <Th label="Email" sortKey="email" sort={sort} onSort={toggleSort} className="w-[30%]" />
-              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[30%]" />
+              <Th label="Email" sortKey="email" sort={sort} onSort={toggleSort} className="w-[25%]" />
+              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[25%]" />
               <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
               <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[14%]" />
+              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[24%]" />
             </tr>
           </thead>
           <tbody>
@@ -243,8 +248,8 @@ function Th({
         type="button"
         onClick={() => onSort(sortKey)}
         className={`inline-flex items-center gap-1 select-none hover:text-slate-900 dark:hover:text-slate-100 ${
-          align === 'right' ? 'flex-row-reverse' : ''
-        } ${active ? 'text-slate-900 dark:text-slate-100' : ''}`}
+          active ? 'text-slate-900 dark:text-slate-100' : ''
+        }`}
       >
         {label}
         <SortIcon state={active ? sort.dir : 'none'} />
