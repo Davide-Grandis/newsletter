@@ -53,7 +53,7 @@ function Layout() {
           >
             <HamburgerIcon />
           </button>
-          <span className="flex items-center gap-2 font-semibold text-slate-900 dark:text-slate-100">
+          <span className="flex items-center gap-2 font-semibold text-[#0060BE]">
             <img
               src="/media/logoenea1.png"
               alt="ENEA"
@@ -139,6 +139,7 @@ function Footer() {
           <span aria-hidden>·</span>
           <span>v{APP_VERSION}</span>
         </span>
+        <span aria-hidden>·</span>
         <span className="flex items-center gap-1">
           Built with
           <HeartIcon />
