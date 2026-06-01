@@ -47,11 +47,6 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
     onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
   });
 
-  const remove = useMutation({
-    mutationFn: (id: number) => api(`${base}/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
-  });
-
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const text = await file.text();
@@ -177,8 +172,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
               <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
               <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[13%]" />
-              <th className="p-2 w-[6%]"></th>
+              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} align="right" className="w-[18%]" />
             </tr>
           </thead>
           <tbody>
@@ -201,19 +195,11 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                   </span>
                 </td>
                 <td className="p-2 text-right">{s.bounce_count}</td>
-                <td className="p-2 text-xs text-slate-500 dark:text-slate-400 truncate">{s.subscribed_at}</td>
-                <td className="p-2 text-right">
-                  <button
-                    onClick={() => remove.mutate(s.id)}
-                    className="text-xs text-red-600 hover:underline"
-                  >
-                    unsubscribe
-                  </button>
-                </td>
+                <td className="p-2 text-right text-xs text-slate-500 dark:text-slate-400 truncate">{s.subscribed_at}</td>
               </tr>
             ))}
             {list.data && rows.length === 0 && (
-              <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No results.</td></tr>
+              <tr><td colSpan={6} className="p-4 text-center text-slate-500 dark:text-slate-400">No results.</td></tr>
             )}
           </tbody>
         </table>
