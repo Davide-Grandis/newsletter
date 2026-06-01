@@ -2,6 +2,11 @@ name = "newsletter-admin"
 main = "src/index.ts"
 compatibility_date = "2025-01-15"
 
+# The admin GUI is served on a custom hostname that is fronted by a
+# Cloudflare Access application. Do NOT pre-create a DNS record for
+# `console.eneanewsletter.it`; this route creates it automatically.
+routes = [{ pattern = "console.eneanewsletter.it", custom_domain = true }]
+
 # Mirror the consumer's warmup config so /api/quota can compute the same caps.
 [vars]
 WARMUP_START_DATE = ""                                    # e.g. "2026-01-06"
@@ -22,4 +27,6 @@ directory = "./public"
 binding = "ASSETS"
 not_found_handling = "single-page-application"
 
-# Secret: ADMIN_TOKEN
+# Auth: this worker MUST be deployed behind a Cloudflare Access application.
+# It has no secret of its own and trusts the
+# `Cf-Access-Authenticated-User-Email` header injected by the Access edge.
