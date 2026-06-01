@@ -168,11 +168,11 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
           <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
               <Th label="Email" sortKey="email" sort={sort} onSort={toggleSort} className="w-[30%]" />
-              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[26%]" />
+              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[30%]" />
               <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
-              <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[18%]" />
+              <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
+              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[14%]" />
             </tr>
           </thead>
           <tbody>
@@ -183,6 +183,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                 <td className="p-2">
                   <StatusPill status={s.status} />
                 </td>
+                <td className="p-2 text-right">{s.bounce_count}</td>
                 <td className="p-2">
                   <span
                     className={`text-xs px-2 py-0.5 rounded ${
@@ -194,8 +195,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                     {s.verified === 1 ? 'True' : 'False'}
                   </span>
                 </td>
-                <td className="p-2 text-right">{s.bounce_count}</td>
-                <td className="p-2 text-right text-xs text-slate-500 dark:text-slate-400 truncate">{s.subscribed_at}</td>
+                <td className="p-2 truncate">{s.subscribed_at}</td>
               </tr>
             ))}
             {list.data && rows.length === 0 && (

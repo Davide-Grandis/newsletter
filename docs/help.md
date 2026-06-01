@@ -24,8 +24,56 @@ and its own subscribers and authors.
   incoming mail for it.
 - **Authors** — only addresses on this list may send the newsletter. Inbound
   mail from anyone else is rejected. Lookup is case-insensitive.
-- **Subscribers** — recipients, scoped to the newsletter. Add individually or
-  import a CSV (`email,name`).
+- **Subscribers** — recipients, scoped to the newsletter. Add individually
+  (verified defaults to **False**), import from CSV, or export the current list
+  to CSV. See *Subscriber CSV import* and *Subscriber statuses* below.
+
+## Subscriber CSV import
+
+Import is **position-based** and the **header row is always ignored** (the first
+line is skipped, whatever it contains). Each remaining row maps by column order:
+
+| Position | Field | Notes |
+| --- | --- | --- |
+| 1 | **email** | Required. Rows with an empty email are skipped. |
+| 2 | **verified** | `True`/`False` (also accepts `1`/`0`, `yes`/`no`). Anything else is treated as False. |
+| 3 | **date subscribed** | Optional. If blank, the current date/time is used. |
+
+Notes:
+
+- The **name** field is *not* imported — imported subscribers have no name.
+- **Duplicates are skipped, not updated.** An email already present in the list
+  (case-insensitive), or repeated within the file, is counted as a duplicate. A
+  popup reports `Subscribers added: X` and `Duplicated: Y` when the import finishes.
+
+Example file:
+
+```csv
+email,verified,date subscribed
+alice@example.com,True,2026-05-01 09:00:00
+bob@example.com,False,
+carol@example.com,1,2026-05-03
+```
+
+**Export** produces a CSV with a header row using the UI field names
+(`Email,Name,Verified,Status,Bounces,Date subscribed`) and honours the current
+status/search filters. Note the export column order differs from the import
+order, so an exported file is not a drop-in re-import.
+
+## Subscriber statuses
+
+Each subscriber has a **status** that controls deliverability. Only **active**
+subscribers receive a campaign.
+
+| Status | Meaning |
+| --- | --- |
+| **active** | Normal subscriber; included in every send. |
+| **unsubscribed** | Opted out (via the unsubscribe link in an email). Excluded from sends. |
+| **bounced** | The address hard-bounced; set automatically by the bounce handler. Excluded from sends. |
+| **complained** | Marked a message as spam; set automatically from complaint feedback. Excluded from sends. |
+
+The separate **verified** flag indicates whether the address has been confirmed;
+it is independent of status and defaults to False for newly added subscribers.
 
 ## Database schema
 
