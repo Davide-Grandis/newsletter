@@ -1,6 +1,10 @@
-import { FormEvent, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Page, Subscriber } from '../api';
+import { SortIcon } from './Newsletters';
+
+type SortKey = 'email' | 'name' | 'status' | 'verified' | 'bounce_count' | 'subscribed_at';
+type ImportResult = { added: number; duplicated: number };
 
 export default function Subscribers({ newsletterId }: { newsletterId: string }) {
   const qc = useQueryClient();
@@ -8,6 +12,8 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState<number>(0);
+  const [sort, setSort] = useState<{ key: SortKey; dir: 'asc' | 'desc' }>({ key: 'email', dir: 'asc' });
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
   const list = useQuery({
     queryKey: ['subs', newsletterId, status, q, cursor],
@@ -18,6 +24,22 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
       return api<Page<Subscriber>>(`${base}?${sp.toString()}`);
     },
   });
+
+  const rows = useMemo(() => {
+    const arr = [...(list.data?.items ?? [])];
+    const { key, dir } = sort;
+    arr.sort((a, b) => {
+      if (key === 'bounce_count' || key === 'verified') {
+        return Number(a[key] ?? 0) - Number(b[key] ?? 0);
+      }
+      return String(a[key] ?? '').localeCompare(String(b[key] ?? ''), undefined, { sensitivity: 'base' });
+    });
+    return dir === 'desc' ? arr.reverse() : arr;
+  }, [list.data, sort]);
+
+  function toggleSort(key: SortKey) {
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: 'asc' }));
+  }
 
   const add = useMutation({
     mutationFn: (vars: { email: string; name?: string }) =>
@@ -33,12 +55,15 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const text = await file.text();
-      return api<{ inserted: number }>(`${base}/import`, {
+      return api<ImportResult>(`${base}/import`, {
         method: 'POST',
         body: JSON.stringify({ csv: text }),
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
+    onSuccess: (res) => {
+      setImportResult(res);
+      qc.invalidateQueries({ queryKey: ['subs', newsletterId] });
+    },
   });
 
   function onAdd(e: FormEvent<HTMLFormElement>) {
@@ -100,8 +125,25 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         </label>
       </div>
 
-      {upload.data && (
-        <div className="text-xs text-emerald-700">Imported {upload.data.inserted} rows.</div>
+      {importResult && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-sm bg-white rounded-lg shadow-lg p-5 dark:bg-slate-900 dark:border dark:border-slate-700">
+            <h2 className="text-base font-semibold text-slate-900 dark:text-slate-100">Import complete</h2>
+            <div className="mt-3 space-y-1 text-sm text-slate-700 dark:text-slate-200">
+              <div>Subscribers added: <span className="font-semibold">{importResult.added}</span></div>
+              <div>Duplicated: <span className="font-semibold">{importResult.duplicated}</span></div>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setImportResult(null)}
+                className="text-sm rounded px-3 py-1.5 bg-slate-900 text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900"
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <form onSubmit={onAdd} className="bg-white border border-slate-200 rounded p-3 flex gap-2 dark:bg-slate-900 dark:border-slate-800">
@@ -127,23 +169,26 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
       </div>
 
       <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
           <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
-              <th className="text-left p-2">Email</th>
-              <th className="text-left p-2">Name</th>
-              <th className="text-left p-2">Verified</th>
-              <th className="text-left p-2">Status</th>
-              <th className="text-right p-2">Bounces</th>
-              <th className="text-left p-2">Date subscribed</th>
-              <th></th>
+              <Th label="Email" sortKey="email" sort={sort} onSort={toggleSort} className="w-[26%]" />
+              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[22%]" />
+              <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[13%]" />
+              <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[11%]" />
+              <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
+              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[13%]" />
+              <th className="p-2 w-[6%]"></th>
             </tr>
           </thead>
           <tbody>
-            {list.data?.items.map((s) => (
+            {rows.map((s) => (
               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800">
-                <td className="p-2 font-mono text-xs">{s.email}</td>
-                <td className="p-2">{s.name ?? '—'}</td>
+                <td className="p-2 font-mono text-xs truncate">{s.email}</td>
+                <td className="p-2 truncate">{s.name ?? '—'}</td>
+                <td className="p-2">
+                  <StatusPill status={s.status} />
+                </td>
                 <td className="p-2">
                   <span
                     className={`text-xs px-2 py-0.5 rounded ${
@@ -155,11 +200,8 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                     {s.verified === 1 ? 'True' : 'False'}
                   </span>
                 </td>
-                <td className="p-2">
-                  <StatusPill status={s.status} />
-                </td>
                 <td className="p-2 text-right">{s.bounce_count}</td>
-                <td className="p-2 text-slate-500 dark:text-slate-400">{s.subscribed_at}</td>
+                <td className="p-2 text-xs text-slate-500 dark:text-slate-400 truncate">{s.subscribed_at}</td>
                 <td className="p-2 text-right">
                   <button
                     onClick={() => remove.mutate(s.id)}
@@ -170,7 +212,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                 </td>
               </tr>
             ))}
-            {list.data && list.data.items.length === 0 && (
+            {list.data && rows.length === 0 && (
               <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No results.</td></tr>
             )}
           </tbody>
@@ -190,6 +232,38 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         >Next →</button>
       </div>
     </div>
+  );
+}
+
+function Th({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  align = 'left',
+  className = '',
+}: {
+  label: string;
+  sortKey: SortKey;
+  sort: { key: SortKey; dir: 'asc' | 'desc' };
+  onSort: (key: SortKey) => void;
+  align?: 'left' | 'right';
+  className?: string;
+}) {
+  const active = sort.key === sortKey;
+  return (
+    <th className={`p-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+      <button
+        type="button"
+        onClick={() => onSort(sortKey)}
+        className={`inline-flex items-center gap-1 select-none hover:text-slate-900 dark:hover:text-slate-100 ${
+          align === 'right' ? 'flex-row-reverse' : ''
+        } ${active ? 'text-slate-900 dark:text-slate-100' : ''}`}
+      >
+        {label}
+        <SortIcon state={active ? sort.dir : 'none'} />
+      </button>
+    </th>
   );
 }
 

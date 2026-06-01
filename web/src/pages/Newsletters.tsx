@@ -231,7 +231,7 @@ function Th({
   );
 }
 
-function SortIcon({ state }: { state: 'asc' | 'desc' | 'none' }) {
+export function SortIcon({ state }: { state: 'asc' | 'desc' | 'none' }) {
   if (state === 'none') {
     return (
       <svg width="8" height="11" viewBox="0 0 8 11" className="text-slate-400 dark:text-slate-500" aria-hidden>

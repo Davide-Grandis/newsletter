@@ -369,12 +369,26 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       // Positional mapping (the header row is always ignored):
       //   field 1 = email, field 2 = Verified, field 3 = date subscribed.
       // Name is not present in the import and is left null.
+      // Duplicates (by email, case-insensitive) are skipped, not updated —
+      // both against existing rows and within the file itself.
+      const existing = await env.DB
+        .prepare('SELECT email FROM subscribers WHERE newsletter_id = ?')
+        .bind(nid)
+        .all<{ email: string }>();
+      const seen = new Set((existing.results ?? []).map((r) => r.email.toLowerCase()));
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-      let inserted = 0;
+      let added = 0;
+      let duplicated = 0;
       for (const line of lines.slice(1)) {
         const cols = splitCsvLine(line);
         const email = (cols[0] ?? '').trim();
         if (!email) continue;
+        const key = email.toLowerCase();
+        if (seen.has(key)) {
+          duplicated++;
+          continue;
+        }
+        seen.add(key);
         const verified = parseBool(cols[1]) ? 1 : 0;
         const subscribedAt = (cols[2] ?? '').trim();
         const token = crypto.randomUUID();
@@ -382,14 +396,13 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
           .prepare(
             "INSERT INTO subscribers (newsletter_id, email, name, verified, subscribed_at, token) " +
               "VALUES (?, ?, NULL, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?) " +
-              "ON CONFLICT(newsletter_id, email) DO UPDATE SET " +
-              "verified=excluded.verified, subscribed_at=excluded.subscribed_at, status='active'",
+              "ON CONFLICT(newsletter_id, email) DO NOTHING",
           )
           .bind(nid, email, verified, subscribedAt, token)
           .run();
-        inserted++;
+        added++;
       }
-      return Response.json({ ok: true, inserted });
+      return Response.json({ ok: true, added, duplicated });
     }
     const sm = /^\/subscribers\/(\d+)$/.exec(rest);
     if (sm) {
