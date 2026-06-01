@@ -143,7 +143,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
 
       <form onSubmit={onAdd} className="bg-white border border-slate-200 rounded p-3 flex gap-2 dark:bg-slate-900 dark:border-slate-800">
         <input name="email" type="email" required placeholder="email@example.com" className={inputCls + ' flex-1'} />
-        <input name="name" placeholder="name (optional)" className={inputCls + ' w-48'} />
+        <input name="name" placeholder="name (optional)" className={inputCls + ' flex-1'} />
         <button className="bg-slate-900 text-white text-sm rounded px-3 py-1 dark:bg-slate-100 dark:text-slate-900">Add</button>
       </form>
 
