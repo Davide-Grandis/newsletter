@@ -172,7 +172,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
               <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
               <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} align="right" className="w-[18%]" />
+              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[18%]" />
             </tr>
           </thead>
           <tbody>
