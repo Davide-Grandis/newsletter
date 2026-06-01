@@ -28,6 +28,13 @@ export interface Env {
   WARMUP_DAILY_CAP_EARLY?: string;
   WARMUP_DAILY_CAP_LATE?: string;
   WARMUP_LATE_START_WEEK?: string;
+  // Email Routing automation. When a newsletter is created/renamed/deleted the
+  // admin worker keeps a matching Email Routing rule in sync so its
+  // `inbound_address` is forwarded to the ingest worker. Best-effort: if these
+  // are unset, newsletter CRUD still works and the API returns a warning.
+  CF_API_TOKEN?: string; // secret — token with "Email Routing Rules: Edit"
+  EMAIL_ROUTING_ZONE_ID?: string; // zone id for the newsletter domain
+  INGEST_WORKER_NAME?: string; // worker script the rule forwards to
 }
 
 interface SubscriberPatch {
@@ -119,7 +126,8 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       }
       throw err;
     }
-    return Response.json({ id, name: nm, inbound_address: addr, enabled: 1 }, { status: 201 });
+    const routing_warning = await createRoutingRule(env, addr);
+    return Response.json({ id, name: nm, inbound_address: addr, enabled: 1, routing_warning }, { status: 201 });
   }
 
   const nl = /^\/api\/newsletters\/([^/]+)(\/.*)?$/.exec(p);
@@ -166,6 +174,16 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
           binds.push(addr);
         }
         if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
+        // Capture the current inbound address before the update so we can move
+        // the matching Email Routing rule if it changed.
+        let oldAddr: string | null = null;
+        if (typeof body.inbound_address === 'string') {
+          const cur = await env.DB
+            .prepare('SELECT inbound_address FROM newsletters WHERE id = ?')
+            .bind(nid)
+            .first<{ inbound_address: string }>();
+          oldAddr = cur?.inbound_address ?? null;
+        }
         binds.push(nid);
         try {
           const res = await env.DB
@@ -179,7 +197,11 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
           }
           throw err;
         }
-        return Response.json({ ok: true });
+        let routing_warning: string | undefined;
+        if (typeof body.inbound_address === 'string' && oldAddr) {
+          routing_warning = await moveRoutingRule(env, oldAddr, body.inbound_address.trim().toLowerCase());
+        }
+        return Response.json({ ok: true, routing_warning });
       }
       if (m === 'DELETE') {
         // Campaigns retain a newsletter_id with no cascade; refuse to delete a
@@ -194,9 +216,14 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
             { status: 409 },
           );
         }
+        const cur = await env.DB
+          .prepare('SELECT inbound_address FROM newsletters WHERE id = ?')
+          .bind(nid)
+          .first<{ inbound_address: string }>();
         const res = await env.DB.prepare('DELETE FROM newsletters WHERE id = ?').bind(nid).run();
         if (!res.meta?.changes) return Response.json({ error: 'not found' }, { status: 404 });
-        return Response.json({ ok: true });
+        const routing_warning = cur ? await deleteRoutingRule(env, cur.inbound_address) : undefined;
+        return Response.json({ ok: true, routing_warning });
       }
     }
 
@@ -550,6 +577,112 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   }
 
   return Response.json({ error: 'not found' }, { status: 404 });
+}
+
+// -------- Email Routing rule sync --------
+//
+// Keeps one Email Routing rule per newsletter, matching the newsletter's
+// `inbound_address` (literal "to") and forwarding it to the ingest worker.
+// All functions are best-effort: they return a human-readable warning string
+// on failure (or when unconfigured) instead of throwing, so newsletter CRUD
+// always succeeds even if rule management does not.
+
+const CF_API = 'https://api.cloudflare.com/client/v4';
+
+function routingReady(env: Env): boolean {
+  return Boolean(env.CF_API_TOKEN && env.EMAIL_ROUTING_ZONE_ID);
+}
+
+function routingRulesPath(env: Env, suffix = ''): string {
+  return `${CF_API}/zones/${env.EMAIL_ROUTING_ZONE_ID}/email/routing/rules${suffix}`;
+}
+
+async function cfJson(env: Env, urlStr: string, init: RequestInit = {}): Promise<any> {
+  const res = await fetch(urlStr, {
+    ...init,
+    headers: {
+      authorization: `Bearer ${env.CF_API_TOKEN}`,
+      'content-type': 'application/json',
+      ...(init.headers ?? {}),
+    },
+  });
+  const body: any = await res.json().catch(() => ({}));
+  if (!res.ok || body?.success === false) {
+    const msg =
+      (body?.errors ?? []).map((e: { message?: string }) => e.message).filter(Boolean).join('; ') ||
+      `HTTP ${res.status}`;
+    throw new Error(msg);
+  }
+  return body;
+}
+
+function ruleBody(env: Env, addr: string): string {
+  return JSON.stringify({
+    name: `newsletter:${addr}`,
+    enabled: true,
+    matchers: [{ type: 'literal', field: 'to', value: addr }],
+    actions: [{ type: 'worker', value: [env.INGEST_WORKER_NAME ?? 'newsletter-ingest'] }],
+  });
+}
+
+// Returns the rule id whose "to" matcher equals `addr`, or null. Paginates.
+async function findRoutingRuleId(env: Env, addr: string): Promise<string | null> {
+  let page = 1;
+  for (;;) {
+    const body = await cfJson(env, routingRulesPath(env, `?page=${page}&per_page=50`));
+    for (const r of body.result ?? []) {
+      const matched = (r.matchers ?? []).some(
+        (mm: { field?: string; value?: string }) =>
+          mm.field === 'to' && String(mm.value ?? '').toLowerCase() === addr,
+      );
+      if (matched) return r.id ?? r.tag ?? null;
+    }
+    const info = body.result_info;
+    if (!info || page >= (info.total_pages ?? 1)) return null;
+    page++;
+  }
+}
+
+async function createRoutingRule(env: Env, addr: string): Promise<string | undefined> {
+  if (!routingReady(env)) {
+    return 'Email Routing not configured — add the rule manually (set CF_API_TOKEN + EMAIL_ROUTING_ZONE_ID to automate).';
+  }
+  try {
+    if (await findRoutingRuleId(env, addr)) return undefined; // already routed
+    await cfJson(env, routingRulesPath(env), { method: 'POST', body: ruleBody(env, addr) });
+    return undefined;
+  } catch (e) {
+    return `Email Routing rule not created: ${(e as Error).message}`;
+  }
+}
+
+async function moveRoutingRule(env: Env, oldAddr: string, newAddr: string): Promise<string | undefined> {
+  if (oldAddr === newAddr) return undefined;
+  if (!routingReady(env)) {
+    return 'Email Routing not configured — update the rule manually.';
+  }
+  try {
+    const id = await findRoutingRuleId(env, oldAddr);
+    if (id) {
+      await cfJson(env, routingRulesPath(env, `/${id}`), { method: 'PUT', body: ruleBody(env, newAddr) });
+    } else {
+      await cfJson(env, routingRulesPath(env), { method: 'POST', body: ruleBody(env, newAddr) });
+    }
+    return undefined;
+  } catch (e) {
+    return `Email Routing rule not updated: ${(e as Error).message}`;
+  }
+}
+
+async function deleteRoutingRule(env: Env, addr: string): Promise<string | undefined> {
+  if (!routingReady(env)) return undefined;
+  try {
+    const id = await findRoutingRuleId(env, addr);
+    if (id) await cfJson(env, routingRulesPath(env, `/${id}`), { method: 'DELETE' });
+    return undefined;
+  } catch (e) {
+    return `Email Routing rule not deleted: ${(e as Error).message}`;
+  }
 }
 
 async function serveMedia(req: Request, env: Env, url: URL): Promise<Response> {

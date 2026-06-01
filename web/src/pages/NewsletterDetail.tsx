@@ -12,6 +12,7 @@ export default function NewsletterDetail() {
   const { id = '' } = useParams();
   const qc = useQueryClient();
   const [tab, setTab] = useState<Tab>('subscribers');
+  const [warn, setWarn] = useState<string | null>(null);
 
   const detail = useQuery({
     queryKey: ['newsletter', id],
@@ -20,8 +21,9 @@ export default function NewsletterDetail() {
 
   const patch = useMutation({
     mutationFn: (body: Partial<Pick<Newsletter, 'name' | 'inbound_address'>> & { enabled?: boolean }) =>
-      api(`/api/newsletters/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
-    onSuccess: () => {
+      api<{ routing_warning?: string }>(`/api/newsletters/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
+    onSuccess: (res) => {
+      setWarn(res.routing_warning ?? null);
       qc.invalidateQueries({ queryKey: ['newsletter', id] });
       qc.invalidateQueries({ queryKey: ['newsletters'] });
     },
@@ -44,6 +46,13 @@ export default function NewsletterDetail() {
           </span>
         </div>
       </div>
+
+      {warn && (
+        <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-800/60">
+          <span className="flex-1">{warn}</span>
+          <button onClick={() => setWarn(null)} className="text-amber-600 hover:underline dark:text-amber-400">dismiss</button>
+        </div>
+      )}
 
       <Settings n={n} onSave={(body) => patch.mutate(body)} saving={patch.isPending} />
 
@@ -96,7 +105,7 @@ function Settings({
         </button>
       </div>
       <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
-        Add an Email Routing rule pointing <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">{n.inbound_address}</code> at the ingest worker.
+        Inbound mail to <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">{n.inbound_address}</code> is routed to the ingest worker automatically via an Email Routing rule.
       </p>
     </section>
   );

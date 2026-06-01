@@ -16,6 +16,13 @@ WARMUP_DAILY_CAP_EARLY = "5000"
 WARMUP_DAILY_CAP_LATE = "10000"
 WARMUP_LATE_START_WEEK = "5"
 
+# Email Routing automation. The admin worker creates/updates/deletes an Email
+# Routing rule (inbound_address -> ingest worker) whenever a newsletter is
+# managed. Requires the CF_API_TOKEN secret (Email Routing Rules: Edit on this
+# zone), set via `wrangler secret put CF_API_TOKEN`.
+EMAIL_ROUTING_ZONE_ID = "48ea553ff7c20557f7596ba55eb4cb5e"
+INGEST_WORKER_NAME = "newsletter-ingest"
+
 [[d1_databases]]
 binding = "DB"
 database_name = "newsletter_db"

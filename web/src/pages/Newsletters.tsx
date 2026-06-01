@@ -6,6 +6,7 @@ import { api, Newsletter } from '../api';
 export default function Newsletters() {
   const qc = useQueryClient();
   const [err, setErr] = useState<string | null>(null);
+  const [warn, setWarn] = useState<string | null>(null);
 
   const list = useQuery({
     queryKey: ['newsletters'],
@@ -14,8 +15,11 @@ export default function Newsletters() {
 
   const create = useMutation({
     mutationFn: (body: { name: string; inbound_address: string }) =>
-      api('/api/newsletters', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['newsletters'] }),
+      api<{ routing_warning?: string }>('/api/newsletters', { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: (res) => {
+      setWarn(res.routing_warning ?? null);
+      qc.invalidateQueries({ queryKey: ['newsletters'] });
+    },
   });
 
   const toggle = useMutation({
@@ -47,6 +51,13 @@ export default function Newsletters() {
   return (
     <div className="space-y-4">
       <h1 className="text-xl font-semibold">Newsletters</h1>
+
+      {warn && (
+        <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-800/60">
+          <span className="flex-1">{warn}</span>
+          <button onClick={() => setWarn(null)} className="text-amber-600 hover:underline dark:text-amber-400">dismiss</button>
+        </div>
+      )}
 
       <form
         onSubmit={onCreate}
