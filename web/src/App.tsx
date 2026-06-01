@@ -3,11 +3,11 @@ import { Navigate, NavLink, Outlet, Route, Routes } from 'react-router-dom';
 import { logoutAccess, useIdentity } from './auth';
 import { useTheme } from './theme';
 import Dashboard from './pages/Dashboard';
-import Subscribers from './pages/Subscribers';
+import Newsletters from './pages/Newsletters';
+import NewsletterDetail from './pages/NewsletterDetail';
 import Campaigns from './pages/Campaigns';
 import CampaignDetail from './pages/CampaignDetail';
 import Bounces from './pages/Bounces';
-import Authors from './pages/Authors';
 import Help from './pages/Help';
 
 export default function App() {
@@ -15,11 +15,11 @@ export default function App() {
     <Routes>
       <Route element={<Layout />}>
         <Route index element={<Dashboard />} />
-        <Route path="subscribers" element={<Subscribers />} />
+        <Route path="newsletters" element={<Newsletters />} />
+        <Route path="newsletters/:id" element={<NewsletterDetail />} />
         <Route path="campaigns" element={<Campaigns />} />
         <Route path="campaigns/:id" element={<CampaignDetail />} />
         <Route path="bounces" element={<Bounces />} />
-        <Route path="authors" element={<Authors />} />
         <Route path="help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -29,10 +29,9 @@ export default function App() {
 
 const NAV_ITEMS = [
   { to: '/', label: 'Dashboard', end: true },
-  { to: '/subscribers', label: 'Subscribers', end: false },
+  { to: '/newsletters', label: 'Newsletters', end: false },
   { to: '/campaigns', label: 'Campaigns', end: false },
   { to: '/bounces', label: 'Bounces', end: false },
-  { to: '/authors', label: 'Authors', end: false },
   { to: '/help', label: 'Help', end: false },
 ];
 
@@ -132,16 +131,18 @@ const LAST_UPDATED = 'Jun 1, 2026';
 function Footer() {
   return (
     <footer className="shrink-0 border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 px-4 py-3">
-      <div className="relative flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 max-w-6xl mx-auto">
-        <span>Created {CREATED_DATE}</span>
-        <span aria-hidden>·</span>
-        <span>Last updated {LAST_UPDATED}</span>
-        <span aria-hidden>·</span>
-        <span>v{APP_VERSION}</span>
-        <span className="w-full text-center sm:w-auto sm:absolute sm:left-1/2 sm:-translate-x-1/2 flex items-center justify-center gap-1">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400 max-w-6xl mx-auto">
+        <span className="flex items-center gap-1">
           Built with
           <HeartIcon />
           on Cloudflare
+        </span>
+        <span className="ml-auto flex items-center gap-x-4 gap-y-1 flex-wrap">
+          <span>Created {CREATED_DATE}</span>
+          <span aria-hidden>·</span>
+          <span>Last updated {LAST_UPDATED}</span>
+          <span aria-hidden>·</span>
+          <span>v{APP_VERSION}</span>
         </span>
       </div>
     </footer>

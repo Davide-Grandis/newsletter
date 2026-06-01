@@ -2,17 +2,36 @@
 
 PRAGMA foreign_keys = ON;
 
--- Authors authorized to send newsletters by emailing the ingest worker.
--- Inbound email's `From:` header is checked against this table (case-insensitive).
+-- A newsletter is an independent mailing list with its own inbound address,
+-- author allow-list and subscriber list. Inbound email is routed to a
+-- newsletter by matching the recipient address against `inbound_address`.
+CREATE TABLE IF NOT EXISTS newsletters (
+  id              TEXT PRIMARY KEY,
+  name            TEXT NOT NULL,
+  inbound_address TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  enabled         INTEGER NOT NULL DEFAULT 1,
+  created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+-- Seed a default newsletter so a fresh install works out of the box.
+INSERT OR IGNORE INTO newsletters (id, name, inbound_address, enabled)
+  VALUES ('default', 'Default', 'newsletter@eneanewsletter.it', 1);
+
+-- Authors authorized to send a given newsletter by emailing the ingest worker.
+-- Inbound email's `From:` header is checked against this table, scoped to the
+-- recipient newsletter (case-insensitive).
 CREATE TABLE IF NOT EXISTS authors (
-  email      TEXT PRIMARY KEY COLLATE NOCASE,
-  name       TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  newsletter_id TEXT NOT NULL REFERENCES newsletters(id) ON DELETE CASCADE,
+  email         TEXT NOT NULL COLLATE NOCASE,
+  name          TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (newsletter_id, email)
 );
 
 CREATE TABLE IF NOT EXISTS subscribers (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  email           TEXT NOT NULL UNIQUE,
+  newsletter_id   TEXT NOT NULL REFERENCES newsletters(id) ON DELETE CASCADE,
+  email           TEXT NOT NULL,
   name            TEXT,
   status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active','unsubscribed','bounced','complained')),
@@ -20,12 +39,15 @@ CREATE TABLE IF NOT EXISTS subscribers (
   unsubscribed_at TEXT,
   bounce_count    INTEGER NOT NULL DEFAULT 0,
   last_bounce_at  TEXT,
-  token           TEXT NOT NULL
+  token           TEXT NOT NULL,
+  UNIQUE (newsletter_id, email)
 );
 CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers(status);
+CREATE INDEX IF NOT EXISTS idx_subscribers_newsletter ON subscribers(newsletter_id);
 
 CREATE TABLE IF NOT EXISTS campaigns (
   id                      TEXT PRIMARY KEY,
+  newsletter_id           TEXT NOT NULL DEFAULT 'default' REFERENCES newsletters(id),
   subject                 TEXT NOT NULL,
   html                    TEXT,
   text                    TEXT,
@@ -40,6 +62,7 @@ CREATE TABLE IF NOT EXISTS campaigns (
   attachment_total_bytes  INTEGER NOT NULL DEFAULT 0,
   link_mode               INTEGER NOT NULL DEFAULT 0
 );
+CREATE INDEX IF NOT EXISTS idx_campaigns_newsletter ON campaigns(newsletter_id);
 
 CREATE TABLE IF NOT EXISTS attachments (
   id            INTEGER PRIMARY KEY AUTOINCREMENT,

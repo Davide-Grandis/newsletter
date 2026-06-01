@@ -84,153 +84,267 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
 
-  // -------- authors (ingest allow-list) --------
+  // -------- newsletters --------
 
-  if (m === 'GET' && p === '/api/authors') {
+  if (m === 'GET' && p === '/api/newsletters') {
     const { results } = await env.DB
-      .prepare('SELECT email, name, created_at FROM authors ORDER BY created_at DESC')
-      .all<{ email: string; name: string | null; created_at: string }>();
+      .prepare(
+        `SELECT n.id, n.name, n.inbound_address, n.enabled, n.created_at, ` +
+          `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id) AS subscriber_count, ` +
+          `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id AND s.status='active') AS active_count, ` +
+          `(SELECT COUNT(*) FROM authors a WHERE a.newsletter_id = n.id) AS author_count ` +
+          `FROM newsletters n ORDER BY n.created_at ASC`,
+      )
+      .all();
     return Response.json({ items: results ?? [] });
   }
 
-  if (m === 'POST' && p === '/api/authors') {
-    const { email, name } = await req.json<{ email: string; name?: string | null }>();
-    const norm = (email ?? '').trim().toLowerCase();
-    if (!norm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(norm)) {
-      return Response.json({ error: 'valid email required' }, { status: 400 });
+  if (m === 'POST' && p === '/api/newsletters') {
+    const { name, inbound_address } = await req.json<{ name?: string; inbound_address?: string }>();
+    const nm = (name ?? '').trim();
+    const addr = (inbound_address ?? '').trim().toLowerCase();
+    if (!nm) return Response.json({ error: 'name required' }, { status: 400 });
+    if (!addr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+      return Response.json({ error: 'valid inbound_address required' }, { status: 400 });
     }
+    const id = crypto.randomUUID();
     try {
       await env.DB
-        .prepare('INSERT INTO authors (email, name) VALUES (?, ?)')
-        .bind(norm, name ?? null)
+        .prepare('INSERT INTO newsletters (id, name, inbound_address, enabled) VALUES (?, ?, ?, 1)')
+        .bind(id, nm, addr)
         .run();
     } catch (err) {
-      const msg = (err as Error).message;
-      if (/UNIQUE|PRIMARY KEY/i.test(msg)) {
-        return Response.json({ error: 'author already exists' }, { status: 409 });
+      if (/UNIQUE/i.test((err as Error).message)) {
+        return Response.json({ error: 'inbound address already in use' }, { status: 409 });
       }
       throw err;
     }
-    return Response.json({ email: norm, name: name ?? null }, { status: 201 });
+    return Response.json({ id, name: nm, inbound_address: addr, enabled: 1 }, { status: 201 });
   }
 
-  const authorMatch = /^\/api\/authors\/(.+)$/.exec(p);
-  if (authorMatch) {
-    const email = decodeURIComponent(authorMatch[1]!).toLowerCase();
-    if (m === 'DELETE') {
-      const res = await env.DB
-        .prepare('DELETE FROM authors WHERE email = ?')
-        .bind(email)
-        .run();
-      if (!res.meta?.changes) {
-        return Response.json({ error: 'not found' }, { status: 404 });
+  const nl = /^\/api\/newsletters\/([^/]+)(\/.*)?$/.exec(p);
+  if (nl) {
+    const nid = decodeURIComponent(nl[1]!);
+    const rest = nl[2] ?? '';
+
+    // ---- newsletter root: detail / update / delete ----
+    if (rest === '') {
+      if (m === 'GET') {
+        const row = await env.DB
+          .prepare(
+            `SELECT n.id, n.name, n.inbound_address, n.enabled, n.created_at, ` +
+              `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id) AS subscriber_count, ` +
+              `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id AND s.status='active') AS active_count, ` +
+              `(SELECT COUNT(*) FROM authors a WHERE a.newsletter_id = n.id) AS author_count ` +
+              `FROM newsletters n WHERE n.id = ?`,
+          )
+          .bind(nid)
+          .first();
+        if (!row) return Response.json({ error: 'not found' }, { status: 404 });
+        return Response.json(row);
       }
-      return Response.json({ ok: true });
-    }
-    if (m === 'PATCH') {
-      const body = await req.json<{ name?: string | null }>();
-      await env.DB
-        .prepare('UPDATE authors SET name = ? WHERE email = ?')
-        .bind(body.name ?? null, email)
-        .run();
-      return Response.json({ ok: true });
-    }
-  }
-
-  // -------- subscribers --------
-
-  if (m === 'GET' && p === '/api/subscribers') {
-    const status = url.searchParams.get('status');
-    const q = url.searchParams.get('q');
-    const cursor = Number(url.searchParams.get('cursor') ?? '0');
-    const limit = clamp(Number(url.searchParams.get('limit') ?? '50'), 1, 200);
-
-    const where: string[] = ['id > ?'];
-    const binds: unknown[] = [cursor];
-    if (status) {
-      where.push('status = ?');
-      binds.push(status);
-    }
-    if (q) {
-      where.push('(email LIKE ? OR name LIKE ?)');
-      const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
-      binds.push(like, like);
-    }
-    binds.push(limit);
-    const sql =
-      `SELECT id, email, name, status, bounce_count, subscribed_at FROM subscribers ` +
-      `WHERE ${where.join(' AND ')} ORDER BY id ASC LIMIT ?`;
-    const { results } = await env.DB.prepare(sql).bind(...binds).all();
-    const last = results?.[results.length - 1] as { id: number } | undefined;
-    const next = last && results.length === limit ? last.id : null;
-    return Response.json({ items: results ?? [], nextCursor: next });
-  }
-
-  if (m === 'POST' && p === '/api/subscribers') {
-    const { email, name } = await req.json<{ email: string; name?: string }>();
-    if (!email) return Response.json({ error: 'email required' }, { status: 400 });
-    const token = crypto.randomUUID();
-    await env.DB
-      .prepare(
-        "INSERT INTO subscribers (email, name, token) VALUES (?, ?, ?) " +
-          "ON CONFLICT(email) DO UPDATE SET status='active', name=COALESCE(excluded.name, subscribers.name)",
-      )
-      .bind(email, name ?? null, token)
-      .run();
-    return Response.json({ ok: true });
-  }
-
-  const subMatch = /^\/api\/subscribers\/(\d+)$/.exec(p);
-  if (subMatch) {
-    const id = Number(subMatch[1]);
-    if (m === 'DELETE') {
-      await env.DB
-        .prepare("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=datetime('now') WHERE id = ?")
-        .bind(id)
-        .run();
-      return Response.json({ ok: true });
-    }
-    if (m === 'PATCH') {
-      const body = await req.json<SubscriberPatch>();
-      const sets: string[] = [];
-      const binds: unknown[] = [];
-      if ('name' in body) {
-        sets.push('name = ?');
-        binds.push(body.name);
+      if (m === 'PATCH') {
+        const body = await req.json<{ name?: string; enabled?: boolean; inbound_address?: string }>();
+        const sets: string[] = [];
+        const binds: unknown[] = [];
+        if (typeof body.name === 'string') {
+          const nm = body.name.trim();
+          if (!nm) return Response.json({ error: 'name cannot be empty' }, { status: 400 });
+          sets.push('name = ?');
+          binds.push(nm);
+        }
+        if (typeof body.enabled === 'boolean') {
+          sets.push('enabled = ?');
+          binds.push(body.enabled ? 1 : 0);
+        }
+        if (typeof body.inbound_address === 'string') {
+          const addr = body.inbound_address.trim().toLowerCase();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+            return Response.json({ error: 'valid inbound_address required' }, { status: 400 });
+          }
+          sets.push('inbound_address = ?');
+          binds.push(addr);
+        }
+        if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
+        binds.push(nid);
+        try {
+          const res = await env.DB
+            .prepare(`UPDATE newsletters SET ${sets.join(', ')} WHERE id = ?`)
+            .bind(...binds)
+            .run();
+          if (!res.meta?.changes) return Response.json({ error: 'not found' }, { status: 404 });
+        } catch (err) {
+          if (/UNIQUE/i.test((err as Error).message)) {
+            return Response.json({ error: 'inbound address already in use' }, { status: 409 });
+          }
+          throw err;
+        }
+        return Response.json({ ok: true });
       }
-      if (body.status) {
-        sets.push('status = ?');
-        binds.push(body.status);
-        if (body.status === 'unsubscribed') sets.push("unsubscribed_at = datetime('now')");
+      if (m === 'DELETE') {
+        // Campaigns retain a newsletter_id with no cascade; refuse to delete a
+        // newsletter that still has campaign history to avoid orphaning it.
+        const camp = await env.DB
+          .prepare('SELECT COUNT(*) AS n FROM campaigns WHERE newsletter_id = ?')
+          .bind(nid)
+          .first<{ n: number }>();
+        if ((camp?.n ?? 0) > 0) {
+          return Response.json(
+            { error: 'newsletter has campaign history; cannot delete' },
+            { status: 409 },
+          );
+        }
+        const res = await env.DB.prepare('DELETE FROM newsletters WHERE id = ?').bind(nid).run();
+        if (!res.meta?.changes) return Response.json({ error: 'not found' }, { status: 404 });
+        return Response.json({ ok: true });
       }
-      if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
-      binds.push(id);
-      await env.DB.prepare(`UPDATE subscribers SET ${sets.join(', ')} WHERE id = ?`).bind(...binds).run();
-      return Response.json({ ok: true });
     }
-  }
 
-  if (m === 'POST' && p === '/api/subscribers/import') {
-    const ct = req.headers.get('content-type') ?? '';
-    const text = ct.includes('application/json')
-      ? (await req.json<{ csv: string }>()).csv
-      : await req.text();
-    const rows = parseCsv(text);
-    let inserted = 0;
-    for (const row of rows) {
-      const email = row.email?.trim();
-      if (!email) continue;
-      const token = crypto.randomUUID();
-      await env.DB
-        .prepare(
-          "INSERT INTO subscribers (email, name, token) VALUES (?, ?, ?) " +
-            "ON CONFLICT(email) DO UPDATE SET status='active'",
-        )
-        .bind(email, row.name ?? null, token)
-        .run();
-      inserted++;
+    // ---- authors (scoped to newsletter) ----
+    if (rest === '/authors') {
+      if (m === 'GET') {
+        const { results } = await env.DB
+          .prepare('SELECT email, name, created_at FROM authors WHERE newsletter_id = ? ORDER BY created_at DESC')
+          .bind(nid)
+          .all<{ email: string; name: string | null; created_at: string }>();
+        return Response.json({ items: results ?? [] });
+      }
+      if (m === 'POST') {
+        const { email, name } = await req.json<{ email: string; name?: string | null }>();
+        const norm = (email ?? '').trim().toLowerCase();
+        if (!norm || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(norm)) {
+          return Response.json({ error: 'valid email required' }, { status: 400 });
+        }
+        try {
+          await env.DB
+            .prepare('INSERT INTO authors (newsletter_id, email, name) VALUES (?, ?, ?)')
+            .bind(nid, norm, name ?? null)
+            .run();
+        } catch (err) {
+          if (/UNIQUE|PRIMARY KEY/i.test((err as Error).message)) {
+            return Response.json({ error: 'author already exists' }, { status: 409 });
+          }
+          throw err;
+        }
+        return Response.json({ email: norm, name: name ?? null }, { status: 201 });
+      }
     }
-    return Response.json({ ok: true, inserted });
+    const am = /^\/authors\/(.+)$/.exec(rest);
+    if (am) {
+      const email = decodeURIComponent(am[1]!).toLowerCase();
+      if (m === 'DELETE') {
+        const res = await env.DB
+          .prepare('DELETE FROM authors WHERE newsletter_id = ? AND email = ?')
+          .bind(nid, email)
+          .run();
+        if (!res.meta?.changes) return Response.json({ error: 'not found' }, { status: 404 });
+        return Response.json({ ok: true });
+      }
+      if (m === 'PATCH') {
+        const body = await req.json<{ name?: string | null }>();
+        await env.DB
+          .prepare('UPDATE authors SET name = ? WHERE newsletter_id = ? AND email = ?')
+          .bind(body.name ?? null, nid, email)
+          .run();
+        return Response.json({ ok: true });
+      }
+    }
+
+    // ---- subscribers (scoped to newsletter) ----
+    if (rest === '/subscribers') {
+      if (m === 'GET') {
+        const status = url.searchParams.get('status');
+        const q = url.searchParams.get('q');
+        const cursor = Number(url.searchParams.get('cursor') ?? '0');
+        const limit = clamp(Number(url.searchParams.get('limit') ?? '50'), 1, 200);
+        const where: string[] = ['newsletter_id = ?', 'id > ?'];
+        const binds: unknown[] = [nid, cursor];
+        if (status) {
+          where.push('status = ?');
+          binds.push(status);
+        }
+        if (q) {
+          where.push('(email LIKE ? OR name LIKE ?)');
+          const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
+          binds.push(like, like);
+        }
+        binds.push(limit);
+        const sql =
+          `SELECT id, email, name, status, bounce_count, subscribed_at FROM subscribers ` +
+          `WHERE ${where.join(' AND ')} ORDER BY id ASC LIMIT ?`;
+        const { results } = await env.DB.prepare(sql).bind(...binds).all();
+        const last = results?.[results.length - 1] as { id: number } | undefined;
+        const next = last && results.length === limit ? last.id : null;
+        return Response.json({ items: results ?? [], nextCursor: next });
+      }
+      if (m === 'POST') {
+        const { email, name } = await req.json<{ email: string; name?: string }>();
+        if (!email) return Response.json({ error: 'email required' }, { status: 400 });
+        const token = crypto.randomUUID();
+        await env.DB
+          .prepare(
+            "INSERT INTO subscribers (newsletter_id, email, name, token) VALUES (?, ?, ?, ?) " +
+              "ON CONFLICT(newsletter_id, email) DO UPDATE SET status='active', name=COALESCE(excluded.name, subscribers.name)",
+          )
+          .bind(nid, email, name ?? null, token)
+          .run();
+        return Response.json({ ok: true });
+      }
+    }
+    if (rest === '/subscribers/import' && m === 'POST') {
+      const ct = req.headers.get('content-type') ?? '';
+      const text = ct.includes('application/json')
+        ? (await req.json<{ csv: string }>()).csv
+        : await req.text();
+      const rows = parseCsv(text);
+      let inserted = 0;
+      for (const row of rows) {
+        const email = row.email?.trim();
+        if (!email) continue;
+        const token = crypto.randomUUID();
+        await env.DB
+          .prepare(
+            "INSERT INTO subscribers (newsletter_id, email, name, token) VALUES (?, ?, ?, ?) " +
+              "ON CONFLICT(newsletter_id, email) DO UPDATE SET status='active'",
+          )
+          .bind(nid, email, row.name ?? null, token)
+          .run();
+        inserted++;
+      }
+      return Response.json({ ok: true, inserted });
+    }
+    const sm = /^\/subscribers\/(\d+)$/.exec(rest);
+    if (sm) {
+      const id = Number(sm[1]);
+      if (m === 'DELETE') {
+        await env.DB
+          .prepare("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=datetime('now') WHERE id = ? AND newsletter_id = ?")
+          .bind(id, nid)
+          .run();
+        return Response.json({ ok: true });
+      }
+      if (m === 'PATCH') {
+        const body = await req.json<SubscriberPatch>();
+        const sets: string[] = [];
+        const binds: unknown[] = [];
+        if ('name' in body) {
+          sets.push('name = ?');
+          binds.push(body.name);
+        }
+        if (body.status) {
+          sets.push('status = ?');
+          binds.push(body.status);
+          if (body.status === 'unsubscribed') sets.push("unsubscribed_at = datetime('now')");
+        }
+        if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
+        binds.push(id, nid);
+        await env.DB
+          .prepare(`UPDATE subscribers SET ${sets.join(', ')} WHERE id = ? AND newsletter_id = ?`)
+          .bind(...binds)
+          .run();
+        return Response.json({ ok: true });
+      }
+    }
   }
 
   // -------- campaigns --------
@@ -238,13 +352,26 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   if (m === 'GET' && p === '/api/campaigns') {
     const limit = clamp(Number(url.searchParams.get('limit') ?? '50'), 1, 200);
     const cursor = url.searchParams.get('cursor');
-    const where = cursor ? 'WHERE created_at < ?' : '';
-    const binds: unknown[] = cursor ? [cursor, limit] : [limit];
+    const newsletterId = url.searchParams.get('newsletter_id');
+    const conds: string[] = [];
+    const binds: unknown[] = [];
+    if (cursor) {
+      conds.push('c.created_at < ?');
+      binds.push(cursor);
+    }
+    if (newsletterId) {
+      conds.push('c.newsletter_id = ?');
+      binds.push(newsletterId);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    binds.push(limit);
     const { results } = await env.DB
       .prepare(
-        `SELECT id, subject, status, total_recipients, sent_count, failed_count, ` +
-          `attachment_count, link_mode, created_at ` +
-          `FROM campaigns ${where} ORDER BY created_at DESC LIMIT ?`,
+        `SELECT c.id, c.newsletter_id, n.name AS newsletter_name, c.subject, c.status, ` +
+          `c.total_recipients, c.sent_count, c.failed_count, ` +
+          `c.attachment_count, c.link_mode, c.created_at ` +
+          `FROM campaigns c LEFT JOIN newsletters n ON n.id = c.newsletter_id ` +
+          `${where} ORDER BY c.created_at DESC LIMIT ?`,
       )
       .bind(...binds)
       .all<{ created_at: string }>();
@@ -261,9 +388,10 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     if (m === 'GET' && !sub) {
       const campaign = await env.DB
         .prepare(
-          'SELECT id, subject, status, total_recipients, sent_count, failed_count, ' +
-            'attachment_count, attachment_total_bytes, link_mode, sent_by, created_at ' +
-            'FROM campaigns WHERE id = ?',
+          'SELECT c.id, c.newsletter_id, n.name AS newsletter_name, c.subject, c.status, ' +
+            'c.total_recipients, c.sent_count, c.failed_count, ' +
+            'c.attachment_count, c.attachment_total_bytes, c.link_mode, c.sent_by, c.created_at ' +
+            'FROM campaigns c LEFT JOIN newsletters n ON n.id = c.newsletter_id WHERE c.id = ?',
         )
         .bind(id)
         .first();

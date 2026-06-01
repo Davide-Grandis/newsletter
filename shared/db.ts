@@ -50,10 +50,12 @@ export async function getCampaignAttachments(
  * Only `status='active'` rows are yielded; unsubscribed/bounced/complained
  * subscribers are skipped automatically.
  *
+ * @param newsletterId only yield subscribers belonging to this newsletter.
  * @param pageSize how many rows to fetch per D1 round-trip (default 1000).
  */
 export async function* iterateActiveSubscribers(
   db: D1Database,
+  newsletterId: string,
   pageSize = 1000,
 ): AsyncGenerator<{ id: number; email: string; name: string | null; token: string }> {
   let lastId = 0;
@@ -61,9 +63,9 @@ export async function* iterateActiveSubscribers(
     const { results } = await db
       .prepare(
         "SELECT id, email, name, token FROM subscribers " +
-          "WHERE status='active' AND id > ? ORDER BY id ASC LIMIT ?",
+          "WHERE newsletter_id = ? AND status='active' AND id > ? ORDER BY id ASC LIMIT ?",
       )
-      .bind(lastId, pageSize)
+      .bind(newsletterId, lastId, pageSize)
       .all<{ id: number; email: string; name: string | null; token: string }>();
     if (!results || results.length === 0) return;
     for (const row of results) {

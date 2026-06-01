@@ -26,16 +26,35 @@ export interface Env {
 
 export default {
   async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
-    // 1. Author allow-list + auth check
+    // 1. Resolve the target newsletter from the recipient address.
+    //    Email Routing points one address per newsletter at this worker; the
+    //    recipient (`message.to`) is matched against `newsletters.inbound_address`
+    //    (case-insensitive). A disabled or unknown newsletter is rejected.
+    const recipient = (message.to ?? '').toLowerCase();
+    const newsletter = await env.DB
+      .prepare('SELECT id, enabled FROM newsletters WHERE inbound_address = ? LIMIT 1')
+      .bind(recipient)
+      .first<{ id: string; enabled: number }>();
+    if (!newsletter) {
+      message.setReject('Unknown newsletter address');
+      return;
+    }
+    if (!newsletter.enabled) {
+      message.setReject('Newsletter is disabled');
+      return;
+    }
+    const newsletterId = newsletter.id;
+
+    // 2. Author allow-list + auth check, scoped to this newsletter.
     //    The allow-list lives in the D1 `authors` table and is managed via the
     //    admin worker (CRUD endpoints / GUI). The lookup is case-insensitive.
     const from = (message.from ?? '').toLowerCase();
     const authorRow = await env.DB
-      .prepare('SELECT 1 AS ok FROM authors WHERE email = ? LIMIT 1')
-      .bind(from)
+      .prepare('SELECT 1 AS ok FROM authors WHERE newsletter_id = ? AND email = ? LIMIT 1')
+      .bind(newsletterId, from)
       .first<{ ok: number }>();
     if (!authorRow) {
-      message.setReject('Sender not authorized');
+      message.setReject('Sender not authorized for this newsletter');
       return;
     }
     const authResults = (message.headers.get('authentication-results') ?? '').toLowerCase();
@@ -44,7 +63,7 @@ export default {
       return;
     }
 
-    // 2. Read raw MIME (also archived to R2)
+    // 3. Read raw MIME (also archived to R2)
     const raw = new Uint8Array(await streamToArrayBuffer(message.raw));
     const parsed = await PostalMime.parse(raw);
 
@@ -52,7 +71,7 @@ export default {
     const html = parsed.html ?? '';
     const text = parsed.text ?? htmlToText(html);
 
-    // 3. Validate attachments
+    // 4. Validate attachments
     const limits: AttachmentLimits = {
       maxBytes: Number(env.MAX_ATTACHMENT_BYTES),
       maxTotalBytes: Number(env.MAX_TOTAL_ATTACHMENT_BYTES),
@@ -74,7 +93,7 @@ export default {
       return;
     }
 
-    // 4. Persist campaign + archive raw
+    // 5. Persist campaign + archive raw
     const campaignId = crypto.randomUUID();
     const totalAttBytes = inputs.reduce((s, a) => s + a.bytes.byteLength, 0);
     const linkMode = totalAttBytes > Number(env.ATTACHMENT_LINK_THRESHOLD_BYTES);
@@ -82,13 +101,13 @@ export default {
     await env.ARCHIVE.put(`campaigns/${campaignId}/raw.eml`, raw);
     await env.DB
       .prepare(
-        'INSERT INTO campaigns (id, subject, html, text, sent_by, status, attachment_count, attachment_total_bytes, link_mode) ' +
-          "VALUES (?, ?, ?, ?, ?, 'sending', ?, ?, ?)",
+        'INSERT INTO campaigns (id, newsletter_id, subject, html, text, sent_by, status, attachment_count, attachment_total_bytes, link_mode) ' +
+          "VALUES (?, ?, ?, ?, ?, ?, 'sending', ?, ?, ?)",
       )
-      .bind(campaignId, subject, html, text, from, inputs.length, totalAttBytes, linkMode ? 1 : 0)
+      .bind(campaignId, newsletterId, subject, html, text, from, inputs.length, totalAttBytes, linkMode ? 1 : 0)
       .run();
 
-    // 5. Store attachments in R2 + D1 (deduped by sha256 within this campaign)
+    // 6. Store attachments in R2 + D1 (deduped by sha256 within this campaign)
     const seen = new Set<string>();
     for (const a of inputs) {
       const sha = await sha256Hex(a.bytes);
@@ -119,7 +138,7 @@ export default {
         .run();
     }
 
-    // 6. Enqueue subscriber batches
+    // 7. Enqueue subscriber batches
     const batchSize = Math.max(1, Number(env.BATCH_SIZE));
     let total = 0;
     let buf: Recipient[] = [];
@@ -129,7 +148,7 @@ export default {
       total += buf.length;
       buf = [];
     };
-    for await (const s of iterateActiveSubscribers(env.DB)) {
+    for await (const s of iterateActiveSubscribers(env.DB, newsletterId)) {
       buf.push({ subscriberId: s.id, email: s.email, name: s.name ?? undefined, token: s.token });
       if (buf.length >= batchSize) await flush();
     }

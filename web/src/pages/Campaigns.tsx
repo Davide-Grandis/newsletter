@@ -19,6 +19,7 @@ export default function Campaigns() {
             <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
               <tr>
                 <th className="text-left p-2">Subject</th>
+                <th className="text-left p-2">Newsletter</th>
                 <th className="text-left p-2">Status</th>
                 <th className="text-right p-2">Recipients</th>
                 <th className="text-right p-2">Sent</th>
@@ -38,6 +39,7 @@ export default function Campaigns() {
                       <span className="ml-2 text-[10px] uppercase tracking-wide bg-amber-100 text-amber-800 px-1 rounded">link mode</span>
                     )}
                   </td>
+                  <td className="p-2 text-slate-500 dark:text-slate-400">{c.newsletter_name ?? '—'}</td>
                   <td className="p-2">{c.status}</td>
                   <td className="p-2 text-right">{c.total_recipients}</td>
                   <td className="p-2 text-right text-emerald-700 dark:text-emerald-400">{c.sent_count}</td>
@@ -47,7 +49,7 @@ export default function Campaigns() {
                 </tr>
               ))}
               {data && data.items.length === 0 && (
-                <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No campaigns yet.</td></tr>
+                <tr><td colSpan={8} className="p-4 text-center text-slate-500 dark:text-slate-400">No campaigns yet.</td></tr>
               )}
             </tbody>
           </table>

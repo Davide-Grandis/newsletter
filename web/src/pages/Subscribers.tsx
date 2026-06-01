@@ -2,42 +2,43 @@ import { FormEvent, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Page, Subscriber } from '../api';
 
-export default function Subscribers() {
+export default function Subscribers({ newsletterId }: { newsletterId: string }) {
   const qc = useQueryClient();
+  const base = `/api/newsletters/${newsletterId}/subscribers`;
   const [status, setStatus] = useState('');
   const [q, setQ] = useState('');
   const [cursor, setCursor] = useState<number>(0);
 
   const list = useQuery({
-    queryKey: ['subs', status, q, cursor],
+    queryKey: ['subs', newsletterId, status, q, cursor],
     queryFn: () => {
       const sp = new URLSearchParams({ limit: '50', cursor: String(cursor) });
       if (status) sp.set('status', status);
       if (q) sp.set('q', q);
-      return api<Page<Subscriber>>(`/api/subscribers?${sp.toString()}`);
+      return api<Page<Subscriber>>(`${base}?${sp.toString()}`);
     },
   });
 
   const add = useMutation({
     mutationFn: (vars: { email: string; name?: string }) =>
-      api('/api/subscribers', { method: 'POST', body: JSON.stringify(vars) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs'] }),
+      api(base, { method: 'POST', body: JSON.stringify(vars) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
   });
 
   const remove = useMutation({
-    mutationFn: (id: number) => api(`/api/subscribers/${id}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs'] }),
+    mutationFn: (id: number) => api(`${base}/${id}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
   });
 
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const text = await file.text();
-      return api<{ inserted: number }>('/api/subscribers/import', {
+      return api<{ inserted: number }>(`${base}/import`, {
         method: 'POST',
         body: JSON.stringify({ csv: text }),
       });
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['subs', newsletterId] }),
   });
 
   function onAdd(e: FormEvent<HTMLFormElement>) {
@@ -53,7 +54,7 @@ export default function Subscribers() {
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
-        <h1 className="text-xl font-semibold">Subscribers</h1>
+        <h2 className="text-base font-medium">Subscribers</h2>
         <label className="ml-auto text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
           Import CSV
           <input

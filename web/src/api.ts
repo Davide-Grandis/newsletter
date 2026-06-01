@@ -46,8 +46,21 @@ export interface Subscriber {
   subscribed_at: string;
 }
 
+export interface Newsletter {
+  id: string;
+  name: string;
+  inbound_address: string;
+  enabled: 0 | 1;
+  created_at: string;
+  subscriber_count?: number;
+  active_count?: number;
+  author_count?: number;
+}
+
 export interface Campaign {
   id: string;
+  newsletter_id?: string;
+  newsletter_name?: string | null;
   subject: string;
   status: string;
   total_recipients: number;

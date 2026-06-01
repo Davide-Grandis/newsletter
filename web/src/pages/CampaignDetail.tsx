@@ -24,7 +24,12 @@ export default function CampaignDetail() {
       <div>
         <Link to="/campaigns" className="text-sm text-slate-500 hover:underline dark:text-slate-400">← Campaigns</Link>
         <h1 className="text-xl font-semibold mt-1">{detail.data?.campaign.subject ?? ''}</h1>
-        <div className="text-xs text-slate-500 font-mono dark:text-slate-400">{id}</div>
+        <div className="text-xs text-slate-500 dark:text-slate-400">
+          {detail.data?.campaign.newsletter_name && (
+            <span className="mr-2">{detail.data.campaign.newsletter_name}</span>
+          )}
+          <span className="font-mono">{id}</span>
+        </div>
       </div>
 
       {detail.data && (

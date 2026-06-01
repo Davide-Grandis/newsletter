@@ -2,23 +2,24 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, Author } from '../api';
 
-export default function Authors() {
+export default function Authors({ newsletterId }: { newsletterId: string }) {
   const qc = useQueryClient();
+  const base = `/api/newsletters/${newsletterId}/authors`;
   const list = useQuery({
-    queryKey: ['authors'],
-    queryFn: () => api<{ items: Author[] }>('/api/authors'),
+    queryKey: ['authors', newsletterId],
+    queryFn: () => api<{ items: Author[] }>(base),
   });
 
   const add = useMutation({
     mutationFn: (body: { email: string; name?: string | null }) =>
-      api('/api/authors', { method: 'POST', body: JSON.stringify(body) }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors'] }),
+      api(base, { method: 'POST', body: JSON.stringify(body) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors', newsletterId] }),
   });
 
   const remove = useMutation({
     mutationFn: (email: string) =>
-      api(`/api/authors/${encodeURIComponent(email)}`, { method: 'DELETE' }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors'] }),
+      api(`${base}/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['authors', newsletterId] }),
   });
 
   const [email, setEmail] = useState('');
@@ -40,10 +41,10 @@ export default function Authors() {
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-xl font-semibold">Authorized authors</h1>
+        <h2 className="text-base font-medium">Authorized authors</h2>
         <p className="text-sm text-slate-500 mt-1 dark:text-slate-400">
-          Inbound emails to <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">newsletter@…</code> are
-          rejected unless the sender's address is listed here. Lookup is case-insensitive.
+          Inbound emails to this newsletter's address are rejected unless the
+          sender's address is listed here. Lookup is case-insensitive.
         </p>
       </div>
 
