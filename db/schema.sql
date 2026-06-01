@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS subscribers (
   newsletter_id   TEXT NOT NULL REFERENCES newsletters(id) ON DELETE CASCADE,
   email           TEXT NOT NULL,
   name            TEXT,
+  verified        INTEGER NOT NULL DEFAULT 0 CHECK (verified IN (0,1)),
   status          TEXT NOT NULL DEFAULT 'active'
                     CHECK (status IN ('active','unsubscribed','bounced','complained')),
   subscribed_at   TEXT NOT NULL DEFAULT (datetime('now')),

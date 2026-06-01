@@ -41,6 +41,7 @@ export interface Subscriber {
   id: number;
   email: string;
   name: string | null;
+  verified: 0 | 1;
   status: 'active' | 'unsubscribed' | 'bounced' | 'complained';
   bounce_count: number;
   subscribed_at: string;

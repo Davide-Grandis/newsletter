@@ -297,7 +297,7 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
         }
         binds.push(limit);
         const sql =
-          `SELECT id, email, name, status, bounce_count, subscribed_at FROM subscribers ` +
+          `SELECT id, email, name, verified, status, bounce_count, subscribed_at FROM subscribers ` +
           `WHERE ${where.join(' AND ')} ORDER BY id ASC LIMIT ?`;
         const { results } = await env.DB.prepare(sql).bind(...binds).all();
         const last = results?.[results.length - 1] as { id: number } | undefined;
@@ -318,23 +318,74 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
         return Response.json({ ok: true });
       }
     }
+    if (rest === '/subscribers/export' && m === 'GET') {
+      const status = url.searchParams.get('status');
+      const q = url.searchParams.get('q');
+      const where: string[] = ['newsletter_id = ?'];
+      const binds: unknown[] = [nid];
+      if (status) {
+        where.push('status = ?');
+        binds.push(status);
+      }
+      if (q) {
+        where.push('(email LIKE ? OR name LIKE ?)');
+        const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
+        binds.push(like, like);
+      }
+      const { results } = await env.DB
+        .prepare(
+          `SELECT email, name, verified, status, bounce_count, subscribed_at FROM subscribers ` +
+            `WHERE ${where.join(' AND ')} ORDER BY email ASC`,
+        )
+        .bind(...binds)
+        .all<{ email: string; name: string | null; verified: number; status: string; bounce_count: number; subscribed_at: string }>();
+      const header = 'Email,Name,Verified,Status,Bounces,Date subscribed';
+      const lines = (results ?? []).map((r) =>
+        [
+          r.email,
+          r.name ?? '',
+          r.verified ? 'True' : 'False',
+          r.status,
+          String(r.bounce_count ?? 0),
+          r.subscribed_at ?? '',
+        ]
+          .map(csvCell)
+          .join(','),
+      );
+      const csv = [header, ...lines].join('\r\n') + '\r\n';
+      const stamp = new Date().toISOString().slice(0, 10);
+      return new Response(csv, {
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="subscribers-${stamp}.csv"`,
+        },
+      });
+    }
     if (rest === '/subscribers/import' && m === 'POST') {
       const ct = req.headers.get('content-type') ?? '';
       const text = ct.includes('application/json')
         ? (await req.json<{ csv: string }>()).csv
         : await req.text();
-      const rows = parseCsv(text);
+      // Positional mapping (the header row is always ignored):
+      //   field 1 = email, field 2 = Verified, field 3 = date subscribed.
+      // Name is not present in the import and is left null.
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
       let inserted = 0;
-      for (const row of rows) {
-        const email = row.email?.trim();
+      for (const line of lines.slice(1)) {
+        const cols = splitCsvLine(line);
+        const email = (cols[0] ?? '').trim();
         if (!email) continue;
+        const verified = parseBool(cols[1]) ? 1 : 0;
+        const subscribedAt = (cols[2] ?? '').trim();
         const token = crypto.randomUUID();
         await env.DB
           .prepare(
-            "INSERT INTO subscribers (newsletter_id, email, name, token) VALUES (?, ?, ?, ?) " +
-              "ON CONFLICT(newsletter_id, email) DO UPDATE SET status='active'",
+            "INSERT INTO subscribers (newsletter_id, email, name, verified, subscribed_at, token) " +
+              "VALUES (?, ?, NULL, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?) " +
+              "ON CONFLICT(newsletter_id, email) DO UPDATE SET " +
+              "verified=excluded.verified, subscribed_at=excluded.subscribed_at, status='active'",
           )
-          .bind(nid, email, row.name ?? null, token)
+          .bind(nid, email, verified, subscribedAt, token)
           .run();
         inserted++;
       }
@@ -735,21 +786,44 @@ function clamp(n: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, Math.floor(n)));
 }
 
-function parseCsv(text: string): Array<{ email?: string; name?: string }> {
-  const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
-  if (lines.length === 0) return [];
-  const header = lines[0]!.split(',').map((s) => s.trim().toLowerCase());
-  const emailIdx = header.indexOf('email');
-  const nameIdx = header.indexOf('name');
-  const start = emailIdx >= 0 ? 1 : 0;
-  const out: Array<{ email?: string; name?: string }> = [];
-  for (let i = start; i < lines.length; i++) {
-    const cols = lines[i]!.split(',').map((s) => s.trim().replace(/^"|"$/g, ''));
-    if (emailIdx >= 0) {
-      out.push({ email: cols[emailIdx], name: nameIdx >= 0 ? cols[nameIdx] : undefined });
+// Quote a CSV field if it contains a comma, quote, or newline (RFC 4180).
+function csvCell(value: string): string {
+  return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+// Split a single CSV line into fields, honouring RFC-4180 double-quoting
+// (quoted fields may contain commas; "" is an escaped quote).
+function splitCsvLine(line: string): string[] {
+  const out: string[] = [];
+  let cur = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i]!;
+    if (inQuotes) {
+      if (ch === '"') {
+        if (line[i + 1] === '"') {
+          cur += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        cur += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ',') {
+      out.push(cur);
+      cur = '';
     } else {
-      out.push({ email: cols[0] });
+      cur += ch;
     }
   }
+  out.push(cur);
   return out;
+}
+
+// Parse a loose boolean ("true"/"1"/"yes"/"y" => true, everything else false).
+function parseBool(value: string | undefined): boolean {
+  return /^(true|1|yes|y)$/i.test((value ?? '').trim());
 }

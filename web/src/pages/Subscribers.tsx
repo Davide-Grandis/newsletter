@@ -51,11 +51,42 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
     e.currentTarget.reset();
   }
 
+  const [exporting, setExporting] = useState(false);
+  async function onExport() {
+    setExporting(true);
+    try {
+      const sp = new URLSearchParams();
+      if (status) sp.set('status', status);
+      if (q) sp.set('q', q);
+      const res = await fetch(`${base}/export?${sp.toString()}`);
+      if (!res.ok) throw new Error(`export failed (${res.status})`);
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `subscribers-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-2">
         <h2 className="text-base font-medium">Subscribers</h2>
-        <label className="ml-auto text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
+        <button
+          type="button"
+          onClick={onExport}
+          disabled={exporting}
+          className="ml-auto text-sm bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+        >
+          {exporting ? 'Exporting…' : 'Export CSV'}
+        </button>
+        <label className="text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
           Import CSV
           <input
             type="file"
@@ -101,9 +132,10 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
             <tr>
               <th className="text-left p-2">Email</th>
               <th className="text-left p-2">Name</th>
+              <th className="text-left p-2">Verified</th>
               <th className="text-left p-2">Status</th>
               <th className="text-right p-2">Bounces</th>
-              <th className="text-left p-2">Joined</th>
+              <th className="text-left p-2">Date subscribed</th>
               <th></th>
             </tr>
           </thead>
@@ -112,6 +144,17 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800">
                 <td className="p-2 font-mono text-xs">{s.email}</td>
                 <td className="p-2">{s.name ?? '—'}</td>
+                <td className="p-2">
+                  <span
+                    className={`text-xs px-2 py-0.5 rounded ${
+                      s.verified === 1
+                        ? 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300'
+                        : 'bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    {s.verified === 1 ? 'True' : 'False'}
+                  </span>
+                </td>
                 <td className="p-2">
                   <StatusPill status={s.status} />
                 </td>
@@ -128,7 +171,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
               </tr>
             ))}
             {list.data && list.data.items.length === 0 && (
-              <tr><td colSpan={6} className="p-4 text-center text-slate-500 dark:text-slate-400">No results.</td></tr>
+              <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No results.</td></tr>
             )}
           </tbody>
         </table>
