@@ -172,12 +172,12 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         <table className="w-full table-fixed text-sm">
           <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
-              <Th label="Email" sortKey="email" sort={sort} onSort={toggleSort} className="w-[25%]" />
-              <Th label="Name" sortKey="name" sort={sort} onSort={toggleSort} className="w-[25%]" />
-              <Th label="Status" sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
-              <Th label="Verified" sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
-              <Th label="Bounces" sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[24%]" />
+              <Th label="Email" title="Subscriber's email address (unique per newsletter)." sortKey="email" sort={sort} onSort={toggleSort} className="w-[25%]" />
+              <Th label="Name" title="Subscriber's display name (optional)." sortKey="name" sort={sort} onSort={toggleSort} className="w-[25%]" />
+              <Th label="Status" title="Delivery state: active subscribers receive sends; unsubscribed, bounced and complained are excluded." sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
+              <Th label="Verified" title="Whether the email address has been confirmed. Defaults to False for new subscribers." sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
+              <Th label="Bounces" title="Number of times mail to this address has bounced." sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
+              <Th label="Date subscribed" title="When the subscriber was added to the list." sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[24%]" />
             </tr>
           </thead>
           <tbody>
@@ -228,6 +228,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
 
 function Th({
   label,
+  title,
   sortKey,
   sort,
   onSort,
@@ -235,6 +236,7 @@ function Th({
   className = '',
 }: {
   label: string;
+  title?: string;
   sortKey: SortKey;
   sort: { key: SortKey; dir: 'asc' | 'desc' };
   onSort: (key: SortKey) => void;
@@ -243,7 +245,7 @@ function Th({
 }) {
   const active = sort.key === sortKey;
   return (
-    <th className={`p-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+    <th title={title} className={`p-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
       <button
         type="button"
         onClick={() => onSort(sortKey)}

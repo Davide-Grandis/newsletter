@@ -151,11 +151,11 @@ export default function Newsletters() {
         <table className="w-full text-sm">
           <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
             <tr>
-              <Th label="Name" hint="(click to edit)" sortKey="name" sort={sort} onSort={toggleSort} className="w-1/4" />
-              <Th label="Inbound address" sortKey="inbound_address" sort={sort} onSort={toggleSort} className="w-1/4" />
-              <Th label="Subscribers" sortKey="subscriber_count" sort={sort} onSort={toggleSort} align="right" />
-              <Th label="Authors" sortKey="author_count" sort={sort} onSort={toggleSort} align="right" />
-              <Th label="Enabled" sortKey="enabled" sort={sort} onSort={toggleSort} align="right" />
+              <Th label="Name" hint="(click to edit)" title="Newsletter name. Click a row's name to edit it." sortKey="name" sort={sort} onSort={toggleSort} className="w-1/4" />
+              <Th label="Inbound address" title="Email address that authors send issues to. Mail here is routed to the ingest worker." sortKey="inbound_address" sort={sort} onSort={toggleSort} className="w-1/4" />
+              <Th label="Subscribers" title="Number of subscribers on this newsletter's list." sortKey="subscriber_count" sort={sort} onSort={toggleSort} align="right" />
+              <Th label="Authors" title="Number of authorized sender addresses for this newsletter." sortKey="author_count" sort={sort} onSort={toggleSort} align="right" />
+              <Th label="Enabled" title="Whether the newsletter accepts inbound mail. Disabled newsletters reject incoming email." sortKey="enabled" sort={sort} onSort={toggleSort} align="right" />
             </tr>
           </thead>
           <tbody>
@@ -197,6 +197,7 @@ export default function Newsletters() {
 function Th({
   label,
   hint,
+  title,
   sortKey,
   sort,
   onSort,
@@ -205,6 +206,7 @@ function Th({
 }: {
   label: string;
   hint?: string;
+  title?: string;
   sortKey: SortKey;
   sort: { key: SortKey; dir: 'asc' | 'desc' };
   onSort: (key: SortKey) => void;
@@ -213,7 +215,7 @@ function Th({
 }) {
   const active = sort.key === sortKey;
   return (
-    <th className={`p-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
+    <th title={title} className={`p-2 ${align === 'right' ? 'text-right' : 'text-left'} ${className}`}>
       <span className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
         <button
           type="button"
