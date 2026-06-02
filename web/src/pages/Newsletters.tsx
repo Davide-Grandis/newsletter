@@ -62,11 +62,14 @@ export default function Newsletters() {
 
   const toggle = useMutation({
     mutationFn: (vars: { id: string; enabled: boolean }) =>
-      api(`/api/newsletters/${vars.id}`, {
+      api<{ routing_warning?: string }>(`/api/newsletters/${vars.id}`, {
         method: 'PATCH',
         body: JSON.stringify({ enabled: vars.enabled }),
       }),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['newsletters'] }),
+    onSuccess: (res) => {
+      setWarn(res.routing_warning ?? null);
+      qc.invalidateQueries({ queryKey: ['newsletters'] });
+    },
   });
 
   function onCreate(e: FormEvent<HTMLFormElement>) {
@@ -113,7 +116,12 @@ export default function Newsletters() {
           </span>
           <br />
           <span className="whitespace-nowrap">
-            Creating, renaming or deleting a newsletter automatically synchronizes the matching Cloudflare Email Routing rule (inbound address → ingest worker).
+            Creating, renaming, enabling/disabling or deleting a newsletter automatically synchronizes the matching Cloudflare Email Routing rule (disabling a newsletter disables its rule).
+          </span>
+          <br />
+          <span className="inline-block max-w-3xl">
+            The ingest worker also re-checks the enabled flag as a safety net, in case the
+            Cloudflare rule is changed manually.
           </span>
         </p>
       </div>

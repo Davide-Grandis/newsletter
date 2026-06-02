@@ -391,15 +391,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           binds.push(addr);
         }
         if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
-        // Capture the current inbound address before the update so we can move
-        // the matching Email Routing rule if it changed.
-        let oldAddr: string | null = null;
-        if (typeof body.inbound_address === 'string') {
-          const cur = await env.DB
-            .prepare('SELECT inbound_address FROM newsletters WHERE id = ?')
+        // Capture the current address + enabled state before the update so we
+        // can reconcile the Email Routing rule (move on rename, enable/disable
+        // on toggle) afterwards.
+        const touchesRouting =
+          typeof body.inbound_address === 'string' || typeof body.enabled === 'boolean';
+        let cur: { inbound_address: string; enabled: number } | null = null;
+        if (touchesRouting) {
+          cur = await env.DB
+            .prepare('SELECT inbound_address, enabled FROM newsletters WHERE id = ?')
             .bind(nid)
-            .first<{ inbound_address: string }>();
-          oldAddr = cur?.inbound_address ?? null;
+            .first<{ inbound_address: string; enabled: number }>();
         }
         binds.push(nid);
         try {
@@ -415,8 +417,20 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           throw err;
         }
         let routing_warning: string | undefined;
-        if (typeof body.inbound_address === 'string' && oldAddr) {
-          routing_warning = await moveRoutingRule(env, oldAddr, body.inbound_address.trim().toLowerCase());
+        if (cur) {
+          const newAddr =
+            typeof body.inbound_address === 'string'
+              ? body.inbound_address.trim().toLowerCase()
+              : cur.inbound_address;
+          const newEnabled =
+            typeof body.enabled === 'boolean' ? body.enabled : cur.enabled === 1;
+          if (newAddr !== cur.inbound_address) {
+            // Rename: move the rule (preserving the resulting enabled state).
+            routing_warning = await moveRoutingRule(env, cur.inbound_address, newAddr, newEnabled);
+          } else if (newEnabled !== (cur.enabled === 1)) {
+            // Enable/disable toggle: flip the rule's enabled flag to match.
+            routing_warning = await setRoutingRuleEnabled(env, newAddr, newEnabled);
+          }
         }
         return Response.json({ ok: true, routing_warning });
       }
@@ -897,10 +911,10 @@ async function cfJson(env: Env, urlStr: string, init: RequestInit = {}): Promise
   return body;
 }
 
-function ruleBody(env: Env, addr: string): string {
+function ruleBody(env: Env, addr: string, enabled = true): string {
   return JSON.stringify({
     name: `newsletter:${addr}`,
-    enabled: true,
+    enabled,
     matchers: [{ type: 'literal', field: 'to', value: addr }],
     actions: [{ type: 'worker', value: [env.INGEST_WORKER_NAME ?? 'newsletter-ingest'] }],
   });
@@ -937,7 +951,12 @@ async function createRoutingRule(env: Env, addr: string): Promise<string | undef
   }
 }
 
-async function moveRoutingRule(env: Env, oldAddr: string, newAddr: string): Promise<string | undefined> {
+async function moveRoutingRule(
+  env: Env,
+  oldAddr: string,
+  newAddr: string,
+  enabled = true,
+): Promise<string | undefined> {
   if (oldAddr === newAddr) return undefined;
   if (!routingReady(env)) {
     return 'Email Routing not configured — update the rule manually.';
@@ -945,13 +964,33 @@ async function moveRoutingRule(env: Env, oldAddr: string, newAddr: string): Prom
   try {
     const id = await findRoutingRuleId(env, oldAddr);
     if (id) {
-      await cfJson(env, routingRulesPath(env, `/${id}`), { method: 'PUT', body: ruleBody(env, newAddr) });
+      await cfJson(env, routingRulesPath(env, `/${id}`), { method: 'PUT', body: ruleBody(env, newAddr, enabled) });
     } else {
-      await cfJson(env, routingRulesPath(env), { method: 'POST', body: ruleBody(env, newAddr) });
+      await cfJson(env, routingRulesPath(env), { method: 'POST', body: ruleBody(env, newAddr, enabled) });
     }
     return undefined;
   } catch (e) {
     return `Email Routing rule not updated: ${(e as Error).message}`;
+  }
+}
+
+// Flips an existing rule's `enabled` flag to match the newsletter's state.
+async function setRoutingRuleEnabled(
+  env: Env,
+  addr: string,
+  enabled: boolean,
+): Promise<string | undefined> {
+  if (!routingReady(env)) {
+    return `Email Routing not configured — ${enabled ? 'enable' : 'disable'} the rule manually.`;
+  }
+  try {
+    const id = await findRoutingRuleId(env, addr);
+    if (id) {
+      await cfJson(env, routingRulesPath(env, `/${id}`), { method: 'PUT', body: ruleBody(env, addr, enabled) });
+    }
+    return undefined;
+  } catch (e) {
+    return `Email Routing rule not ${enabled ? 'enabled' : 'disabled'}: ${(e as Error).message}`;
   }
 }
 
