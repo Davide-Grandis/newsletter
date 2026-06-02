@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { api, Overview, Quota } from '../api';
+import { CampaignStatus } from './Campaigns';
 
 export default function Dashboard() {
   const { data, isLoading, error } = useQuery({
@@ -22,6 +23,11 @@ export default function Dashboard() {
   const nls = data.newsletters ?? [];
   const enabledCount = nls.filter((n) => n.enabled === 1).length;
   const totalSubs = data.subscribers.reduce((a, s) => a + s.n, 0);
+  // Campaign status counts, ordered with running campaigns first so they lead.
+  const statusOrder = ['sending', 'queued', 'done', 'failed'];
+  const campStatus = [...(data.campaign_status ?? [])].sort(
+    (a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status),
+  );
   // With many newsletters the overview shows only the most active ones; the
   // full list lives on the Newsletters page.
   const TOP_N = 12;
@@ -43,6 +49,18 @@ export default function Dashboard() {
         <Card label="Total campaigns" value={data.campaigns?.total ?? 0} sub={`${data.campaigns?.sent ?? 0} sent`} />
         <Card label="Unsubscribed / bounced" value={(subTotals.unsubscribed ?? 0) + (subTotals.bounced ?? 0)} sub={`${subTotals.bounced ?? 0} bounced`} />
       </div>
+
+      {campStatus.length > 0 && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mr-1">Campaigns by status</span>
+          {campStatus.map((c) => (
+            <span key={c.status} className="inline-flex items-center gap-1">
+              <CampaignStatus status={c.status} />
+              <span className="text-xs text-slate-500 dark:text-slate-400">{c.n.toLocaleString()}</span>
+            </span>
+          ))}
+        </div>
+      )}
 
       {quota.data?.enabled && <QuotaPanel q={quota.data} />}
 

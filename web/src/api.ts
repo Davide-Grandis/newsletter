@@ -120,6 +120,7 @@ export interface Page<T> {
 export interface Overview {
   subscribers: Array<{ status: string; n: number }>;
   campaigns: { total: number; sent: number; sending: number } | null;
+  campaign_status: Array<{ status: string; n: number }>;
   events_last_7d: Array<{ type: string; n: number }>;
   newsletters: Array<{
     id: string;
