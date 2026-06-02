@@ -89,6 +89,9 @@ During development, run `cd web && npm run dev` (Vite proxies `/api/*` to
 - Email Sending (beta) enabled on the zone, DKIM published, the
   `SEND_EMAIL` binding allow-listed for `newsletter@yourdomain.com`.
 - `wrangler` >= 3, Node 20+.
+- Once deployed, the **default settings** must be configured to match your zone
+  (sending identity, domains, Email Routing) before the first send — see
+  [*Initialization*](#initialization).
 
 ## Provisioning
 
@@ -147,11 +150,46 @@ If no commit message is given a timestamped default is used; a clean tree
 skips the commit. The deploy runs before the push, so a failed deploy
 aborts the script before anything is pushed.
 
+## Initialization
+
+Before the first send you must configure the deployment-specific **settings**.
+These used to be per-worker `wrangler.toml` vars; they now resolve from the D1
+`settings` table, falling back to the built-in defaults in
+[`shared/settings.ts`](shared/settings.ts) (`SETTINGS_DEFAULTS`). Secrets and
+bindings (signing keys, API tokens, D1/R2/queue) still live in Wrangler.
+
+There are two ways to set a value:
+
+1. **Edit the defaults** in `shared/settings.ts` and redeploy — best for values
+   that should be baked into the deployment and committed to git.
+2. **Override at runtime** from the console's **Settings** page (writes to the D1
+   `settings` table; no redeploy). A saved value overrides the built-in default;
+   **Reset** reverts to it.
+
+At minimum, set the **sending identity and domains** so they line up with the
+Email Routing / Email Sending setup from [*Prerequisites*](#prerequisites):
+
+| Setting | Purpose |
+| ------- | ------- |
+| `FROM_ADDRESS` | Default `From:` header for outbound mail (a newsletter may override its own sender). |
+| `BASE_DOMAIN` | Domain newsletters receive inbound mail on. |
+| `BOUNCE_DOMAIN` | Domain for VERP bounce return-path addresses (`bounce+<id>@`). |
+| `TRACKING_BASE_URL` | Base URL of the tracker worker (opens, clicks, unsubscribe, downloads). |
+| `EMAIL_ROUTING_ZONE_ID` | Zone whose Email Routing forwards inbound mail to the ingest worker. |
+| `INGEST_WORKER_NAME` | Worker script the auto-managed Email Routing rules target. |
+
+The defaults ship configured for `eneanewsletter.it`; change them for any other
+deployment.
+
 ## Configuration knobs
 
-See each `wrangler.toml`. Defaults are conservative; tune
-`BATCH_SIZE`, `max_concurrency`, attachment limits, and
-`ATTACHMENT_LINK_THRESHOLD_BYTES` to your Email Sending quota.
+The remaining tunables (batch size, attachment limits,
+`ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, warmup, retention, bounce
+thresholds) follow the same model: D1 `settings` row → built-in default in
+`shared/settings.ts`. Edit them there or in the console's **Settings** page (see
+[*Initialization*](#initialization)). Queue `max_concurrency` is still set in
+`workers/consumer/wrangler.toml`. Defaults are conservative; tune them to your
+Email Sending quota.
 
 ## Notes
 
@@ -320,8 +358,8 @@ newsletter/
     └── migrations/
 ```
 
-## 8. Configuration (vars / secrets)
-- Vars: `FROM_ADDRESS`, `TRACKING_BASE_URL`, `BOUNCE_DOMAIN`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`.
+## 8. Configuration (settings / secrets)
+- Settings (resolved from the D1 `settings` table → built-in defaults in `shared/settings.ts`, editable on the console's **Settings** page; see [*Initialization*](#initialization)): `EMAIL_ROUTING_ZONE_ID`, `INGEST_WORKER_NAME`, `BASE_DOMAIN`, `FROM_ADDRESS`, `BOUNCE_DOMAIN`, `TRACKING_BASE_URL`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`, and the `WARMUP_*` keys.
 - Secrets (`wrangler secret put`): `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`. The admin worker has no auth secret — front it with a Cloudflare Access application; it optionally takes `CF_API_TOKEN` to auto-manage Email Routing rules.
 
 ## 9. Key Flows
@@ -340,9 +378,9 @@ newsletter/
 
 To preserve sending reputation when bringing the domain online, the consumer
 worker enforces a stepped weekly cap with a flat daily ceiling. Warmup is
-**off by default** — set `WARMUP_START_DATE` (UTC date of week 0) on both
-the consumer and admin workers to turn it on. With it disabled the consumer
-behaves exactly as before (no caps).
+**off by default** — set `WARMUP_START_DATE` (UTC date of week 0) on the
+console's **Settings** page (or in `shared/settings.ts`) to turn it on. With it
+disabled the consumer behaves exactly as before (no caps).
 
 | Week  | Weekly cap                       | Daily cap |
 | ----- | -------------------------------- | --------- |
@@ -365,8 +403,8 @@ overflow with `delaySeconds` to the next window, or `msg.retry`s with a
 delay if the cap is already exhausted. Cloudflare Queues caps `delaySeconds`
 at 12 h, so longer waits are achieved by repeated retries.
 
-**Configuration** (mirror these vars on `workers/consumer/wrangler.toml` and
-`workers/admin/wrangler.toml`):
+**Configuration** (settings resolved from the D1 `settings` table → built-in
+defaults in `shared/settings.ts`; edit on the console's **Settings** page):
 
 | Var                       | Default                                  | Meaning                                                |
 | ------------------------- | ---------------------------------------- | ------------------------------------------------------ |

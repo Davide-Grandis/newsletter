@@ -11,6 +11,7 @@ address; the pipeline validates, archives and fans it out to subscribers.
 - **Newsletters** — create newsletters and manage each one's subscribers and authors.
 - **Campaigns** — every issue that has been ingested, with delivery stats.
 - **Bounces** — recent hard/soft bounces.
+- **Settings** — global runtime configuration (sending identity, domains, limits). See *Initial setup*.
 - **Help** — this document.
 
 ## Newsletters
@@ -118,6 +119,25 @@ The system uses two R2 buckets:
   cleanup workers as `ARCHIVE`; the cleanup worker purges it on the retention
   schedule.
 
+## Initial setup
+
+Before the first campaign, an operator must configure the global **Settings** so
+they match the Cloudflare zone described under *Requirements*. Open the
+**Settings** page and set at least the sending identity and domains:
+
+- **Default from address** — the `From:` header for outbound mail (a newsletter
+  can override this with its own sender).
+- **Base domain** — the domain newsletters receive inbound mail on.
+- **Bounce domain** and **Tracking base URL** — the VERP return-path domain and
+  the tracker worker's base URL.
+- **Email Routing zone ID** and **Ingest worker name** — let the console keep
+  Email Routing rules in sync automatically (see *Requirements*).
+
+Each field is **locked until you click Edit**. A saved value is stored in the
+database and overrides the built-in default (defined in `shared/settings.ts`);
+**Reset** reverts a field to that default. Values left unset fall back to the
+built-in default.
+
 ## Requirements
 
 - **Cloudflare Access** — the console must sit behind an Access application. It
@@ -133,10 +153,11 @@ The system uses two R2 buckets:
   cd workers/admin && npx wrangler secret put CF_API_TOKEN
   ```
 
-  The zone and target worker are configured via `EMAIL_ROUTING_ZONE_ID` and
-  `INGEST_WORKER_NAME` in `workers/admin/wrangler.toml`. Without the token,
-  newsletter management still works but routing rules are **not** updated — the
-  console shows a warning and you must add the Email Routing rule manually.
+  The zone and target worker are configured by the **Email Routing zone ID** and
+  **Ingest worker name** settings (Settings page; defaults in
+  `shared/settings.ts`) — see *Initial setup*. Without the token, newsletter
+  management still works but routing rules are **not** updated — the console
+  shows a warning and you must add the Email Routing rule manually.
 - **Signing keys** — the consumer and tracker workers share `LINK_SIGNING_KEY`
   and `ATTACHMENT_SIGNING_KEY` secrets (identical on both) for signed tracking
   and attachment links.
