@@ -856,6 +856,92 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     return Response.json({ items, nextCursor: items.length === limit ? offset + limit : null });
   }
 
+  // CSV export of the (filtered) activity feed. Reuses the same merged query
+  // and filters as /api/logs, but streams every matching row (capped) instead
+  // of paginating.
+  if (m === 'GET' && p === '/api/logs/export') {
+    const q = (url.searchParams.get('q') ?? '').trim();
+    const source = (url.searchParams.get('source') ?? '').trim();
+    const level = (url.searchParams.get('level') ?? '').trim();
+    const EXPORT_CAP = 100000;
+
+    const inner =
+      "SELECT 'log' AS kind, l.id AS id, l.ts AS ts, l.level AS level, l.source AS source, " +
+        'l.event AS event, l.campaign_id AS campaign_id, l.newsletter_id AS newsletter_id, ' +
+        'NULL AS subscriber_id, NULL AS email, l.message AS message, l.detail AS detail ' +
+        'FROM logs l ' +
+      'UNION ALL ' +
+      "SELECT 'event' AS kind, e.id AS id, e.ts AS ts, " +
+        "CASE WHEN e.type IN ('bounce','complaint') THEN 'warn' ELSE 'info' END AS level, " +
+        "CASE WHEN e.type IN ('bounce','complaint') THEN 'bounce' ELSE 'tracker' END AS source, " +
+        'e.type AS event, e.campaign_id AS campaign_id, NULL AS newsletter_id, ' +
+        'e.subscriber_id AS subscriber_id, sub.email AS email, NULL AS message, e.url AS detail ' +
+        'FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id';
+
+    const conds: string[] = [];
+    const binds: unknown[] = [];
+    if (source) {
+      conds.push('f.source = ?');
+      binds.push(source);
+    }
+    if (level) {
+      conds.push('f.level = ?');
+      binds.push(level);
+    }
+    if (q) {
+      const like = `%${q}%`;
+      conds.push(
+        '(f.event LIKE ? OR f.message LIKE ? OR f.campaign_id LIKE ? OR f.email LIKE ? OR f.detail LIKE ? OR n.name LIKE ?)',
+      );
+      binds.push(like, like, like, like, like, like);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+    const sql =
+      `SELECT f.*, n.name AS newsletter_name, c.subject AS campaign_subject FROM (${inner}) f ` +
+      'LEFT JOIN campaigns c ON c.id = f.campaign_id ' +
+      'LEFT JOIN newsletters n ON n.id = COALESCE(f.newsletter_id, c.newsletter_id) ' +
+      `${where} ORDER BY f.ts DESC, f.id DESC LIMIT ?`;
+    const { results } = await env.DB
+      .prepare(sql)
+      .bind(...binds, EXPORT_CAP)
+      .all<{
+        ts: string;
+        level: string;
+        source: string;
+        event: string;
+        newsletter_name: string | null;
+        campaign_subject: string | null;
+        campaign_id: string | null;
+        email: string | null;
+        message: string | null;
+        detail: string | null;
+      }>();
+    const header = 'Time (UTC),Level,Source,Event,Newsletter,Campaign,Email,Description,Detail';
+    const lines = (results ?? []).map((r) =>
+      [
+        r.ts ?? '',
+        r.level ?? '',
+        r.source ?? '',
+        r.event ?? '',
+        r.newsletter_name ?? '',
+        r.campaign_subject ?? '',
+        r.email ?? '',
+        r.message ?? '',
+        r.detail ?? '',
+      ]
+        .map(csvCell)
+        .join(','),
+    );
+    const csv = [header, ...lines].join('\r\n') + '\r\n';
+    const stamp = new Date().toISOString().slice(0, 10);
+    return new Response(csv, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="logs-${stamp}.csv"`,
+      },
+    });
+  }
+
   // -------- warmup quota --------
 
   if (m === 'GET' && p === '/api/quota') {

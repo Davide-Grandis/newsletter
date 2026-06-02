@@ -34,20 +34,54 @@ export default function Logs() {
     setQ(input.trim());
   };
 
+  const [exporting, setExporting] = useState(false);
+  async function onExport() {
+    setExporting(true);
+    try {
+      const sp = new URLSearchParams();
+      if (q) sp.set('q', q);
+      if (source) sp.set('source', source);
+      if (level) sp.set('level', level);
+      const res = await fetch(`/api/logs/export?${sp.toString()}`);
+      if (!res.ok) throw new Error(`export failed (${res.status})`);
+      const blob = await res.blob();
+      const href = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = href;
+      a.download = `logs-${new Date().toISOString().slice(0, 10)}.csv`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(href);
+    } finally {
+      setExporting(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
         <div className="flex items-center justify-between">
           <h1 className="text-xl font-semibold">Logs</h1>
-          <button
-            type="button"
-            onClick={() => logs.refetch()}
-            disabled={logs.isFetching}
-            className="inline-flex items-center gap-1.5 text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
-          >
-            <RefreshIcon spinning={logs.isFetching} />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onExport}
+              disabled={exporting}
+              className="text-sm bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+            >
+              {exporting ? 'Exporting…' : 'Export CSV'}
+            </button>
+            <button
+              type="button"
+              onClick={() => logs.refetch()}
+              disabled={logs.isFetching}
+              className="inline-flex items-center gap-1.5 text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+            >
+              <RefreshIcon spinning={logs.isFetching} />
+              Refresh
+            </button>
+          </div>
         </div>
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400 max-w-3xl">
           Unified activity feed across the whole pipeline: the ingest worker firing on inbound
