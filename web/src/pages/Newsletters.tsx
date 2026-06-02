@@ -108,7 +108,9 @@ export default function Newsletters() {
         </h1>
         <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
           Each newsletter is an independent mailing list with its own inbound address, authors and
-          subscribers. Creating, renaming or deleting a newsletter automatically synchronizes the
+          subscribers.
+          <br />
+          Creating, renaming or deleting a newsletter automatically synchronizes the
           matching Cloudflare Email Routing rule (inbound address → ingest worker).
         </p>
       </div>
