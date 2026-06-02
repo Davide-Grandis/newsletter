@@ -97,14 +97,21 @@ export default function Newsletters() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-semibold">
-        Newsletters
-        {list.data && (
-          <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
-            (total {list.data.items.length}, enabled {list.data.items.filter((n) => n.enabled === 1).length})
-          </span>
-        )}
-      </h1>
+      <div>
+        <h1 className="text-xl font-semibold">
+          Newsletters
+          {list.data && (
+            <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
+              (total {list.data.items.length}, enabled {list.data.items.filter((n) => n.enabled === 1).length})
+            </span>
+          )}
+        </h1>
+        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
+          Each newsletter is an independent mailing list with its own inbound address, authors and
+          subscribers. Creating, renaming or deleting a newsletter automatically synchronizes the
+          matching Cloudflare Email Routing rule (inbound address → ingest worker).
+        </p>
+      </div>
 
       {warn && (
         <div className="flex items-start gap-2 text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2 dark:text-amber-300 dark:bg-amber-900/30 dark:border-amber-800/60">
