@@ -1,4 +1,4 @@
-import { useInfiniteQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState, type FormEvent } from 'react';
 import { api, LogRow, Page } from '../api';
@@ -6,6 +6,9 @@ import { RefreshIcon } from './Dashboard';
 
 const SOURCES = ['', 'ingest', 'consumer', 'tracker', 'bounce', 'admin'];
 const LEVELS = ['', 'info', 'warn', 'error'];
+const PAGE_SIZE = 20;
+const pagerCls =
+  'border border-slate-200 rounded px-3 py-1 disabled:opacity-40 dark:border-slate-700';
 
 export default function Logs() {
   // `input` is the live text box; `q` is the applied search (on submit).
@@ -13,25 +16,33 @@ export default function Logs() {
   const [q, setQ] = useState('');
   const [source, setSource] = useState('');
   const [level, setLevel] = useState('');
+  const [page, setPage] = useState(0);
 
-  const logs = useInfiniteQuery({
-    queryKey: ['logs', q, source, level],
-    initialPageParam: 0,
-    queryFn: ({ pageParam }) => {
-      const sp = new URLSearchParams({ limit: '50', cursor: String(pageParam) });
+  const logs = useQuery({
+    queryKey: ['logs', q, source, level, page],
+    placeholderData: keepPreviousData,
+    queryFn: () => {
+      const sp = new URLSearchParams({ limit: String(PAGE_SIZE), cursor: String(page * PAGE_SIZE) });
       if (q) sp.set('q', q);
       if (source) sp.set('source', source);
       if (level) sp.set('level', level);
       return api<Page<LogRow>>(`/api/logs?${sp.toString()}`);
     },
-    getNextPageParam: (last) => (typeof last.nextCursor === 'number' ? last.nextCursor : undefined),
   });
 
-  const items = logs.data?.pages.flatMap((p) => p.items) ?? [];
+  const items = logs.data?.items ?? [];
+  const hasNext = logs.data?.nextCursor != null;
+
+  // Any filter/search change resets back to the first page.
+  const resetTo = <T,>(setter: (v: T) => void) => (v: T) => {
+    setter(v);
+    setPage(0);
+  };
 
   const onSearch = (e: FormEvent) => {
     e.preventDefault();
     setQ(input.trim());
+    setPage(0);
   };
 
   const [exporting, setExporting] = useState(false);
@@ -99,7 +110,7 @@ export default function Logs() {
         />
         <select
           value={source}
-          onChange={(e) => setSource(e.target.value)}
+          onChange={(e) => resetTo(setSource)(e.target.value)}
           className="border border-slate-300 rounded px-2 py-1.5 text-sm bg-white text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100"
         >
           {SOURCES.map((s) => (
@@ -108,7 +119,7 @@ export default function Logs() {
         </select>
         <select
           value={level}
-          onChange={(e) => setLevel(e.target.value)}
+          onChange={(e) => resetTo(setLevel)(e.target.value)}
           className="border border-slate-300 rounded px-2 py-1.5 text-sm bg-white text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100"
         >
           {LEVELS.map((l) => (
@@ -171,18 +182,32 @@ export default function Logs() {
             </table>
           </div>
 
-          {logs.hasNextPage && (
-            <div className="text-center">
+          <div className="flex items-center justify-between text-sm text-slate-500 dark:text-slate-400">
+            <span>
+              {items.length > 0
+                ? `Showing ${page * PAGE_SIZE + 1}–${page * PAGE_SIZE + items.length}`
+                : 'No results'}
+            </span>
+            <div className="flex items-center gap-2">
+              <span>Page {page + 1}</span>
               <button
                 type="button"
-                onClick={() => logs.fetchNextPage()}
-                disabled={logs.isFetchingNextPage}
-                className="text-sm border border-slate-200 rounded px-4 py-1.5 bg-white hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+                onClick={() => setPage((p) => Math.max(0, p - 1))}
+                disabled={page === 0 || logs.isFetching}
+                className={pagerCls}
               >
-                {logs.isFetchingNextPage ? 'Loading…' : 'Load more'}
+                Prev
+              </button>
+              <button
+                type="button"
+                onClick={() => setPage((p) => p + 1)}
+                disabled={!hasNext || logs.isFetching}
+                className={pagerCls}
+              >
+                Next
               </button>
             </div>
-          )}
+          </div>
         </>
       )}
     </div>
