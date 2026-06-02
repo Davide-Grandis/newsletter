@@ -96,7 +96,7 @@ export default function Logs() {
       ) : (
         <>
           <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-            <table className="w-full text-base">
+            <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
                   <th className="text-left px-3 py-2 whitespace-nowrap">Time (UTC)</th>
