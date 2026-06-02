@@ -240,10 +240,8 @@ export default function Settings() {
                     )}
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                       {bytes && <span>{bytes}</span>}
-                      {s && s.source === 'db' ? (
+                      {s && s.source === 'db' && (
                         <span>overrides default “{s.fallback || '∅'}”</span>
-                      ) : (
-                        s && <span>built-in default</span>
                       )}
                       {editing && fieldError && (
                         <span className="text-red-600">{fieldError}</span>
