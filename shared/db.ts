@@ -139,7 +139,7 @@ export async function recordSendFailure(
 }
 
 /**
- * Flip a campaign from `sending` to `sent` once every recipient has been
+ * Flip a campaign from `sending` to `done` once every recipient has been
  * processed (delivered or failed). Safe to call after each queue batch: the
  * conditional, single-statement UPDATE only matches the campaign that is still
  * `sending` and whose `sent_count + failed_count` has reached
@@ -152,7 +152,7 @@ export async function markCampaignCompleteIfDone(
 ): Promise<void> {
   await db
     .prepare(
-      "UPDATE campaigns SET status = 'sent' " +
+      "UPDATE campaigns SET status = 'done' " +
         "WHERE id = ? AND status = 'sending' AND total_recipients > 0 " +
         'AND sent_count + failed_count >= total_recipients',
     )

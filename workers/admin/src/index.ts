@@ -854,7 +854,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     const camps = await env.DB
       .prepare(
         "SELECT COUNT(*) AS total, " +
-          "SUM(CASE WHEN status='sent' THEN 1 ELSE 0 END) AS sent, " +
+          "SUM(CASE WHEN status='done' THEN 1 ELSE 0 END) AS sent, " +
           "SUM(CASE WHEN status='sending' THEN 1 ELSE 0 END) AS sending " +
           'FROM campaigns',
       )
