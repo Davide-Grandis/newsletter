@@ -99,22 +99,22 @@ export default function Logs() {
             <table className="w-full text-base">
               <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
-                  <th className="text-left p-3 whitespace-nowrap">Time (UTC)</th>
-                  <th className="text-left p-3">Level</th>
-                  <th className="text-left p-3">Newsletter</th>
-                  <th className="text-left p-3">Campaign</th>
-                  <th className="text-left p-3">Source</th>
-                  <th className="text-left p-3">Event</th>
-                  <th className="text-left p-3">Details</th>
+                  <th className="text-left px-3 py-2 whitespace-nowrap">Time (UTC)</th>
+                  <th className="text-left px-3 py-2">Level</th>
+                  <th className="text-left px-3 py-2">Newsletter</th>
+                  <th className="text-left px-3 py-2">Campaign</th>
+                  <th className="text-left px-3 py-2">Source</th>
+                  <th className="text-left px-3 py-2">Event</th>
+                  <th className="text-left px-3 py-2">Details</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((r) => (
                   <tr key={`${r.kind}-${r.id}`} className="border-t border-slate-100 align-top dark:border-slate-800">
-                    <td className="p-3 whitespace-nowrap text-slate-500 dark:text-slate-400">{r.ts}</td>
-                    <td className="p-3"><LevelBadge level={r.level} /></td>
-                    <td className="p-3 whitespace-nowrap text-slate-600 dark:text-slate-300">{r.newsletter_name ?? '—'}</td>
-                    <td className="p-3 whitespace-nowrap">
+                    <td className="px-3 py-1 whitespace-nowrap text-slate-500 dark:text-slate-400">{r.ts}</td>
+                    <td className="px-3 py-1"><LevelBadge level={r.level} /></td>
+                    <td className="px-3 py-1 whitespace-nowrap text-slate-600 dark:text-slate-300">{r.newsletter_name ?? '—'}</td>
+                    <td className="px-3 py-1 whitespace-nowrap">
                       {r.campaign_id ? (
                         <Link to={`/campaigns/${r.campaign_id}`} className="font-mono text-sm text-slate-500 hover:underline dark:text-slate-400">
                           {r.campaign_id.slice(0, 8)}…
@@ -123,9 +123,9 @@ export default function Logs() {
                         <span className="text-slate-400 dark:text-slate-600">—</span>
                       )}
                     </td>
-                    <td className="p-3 text-slate-500 dark:text-slate-400">{r.source}</td>
-                    <td className="p-3 font-mono text-sm">{r.event}</td>
-                    <td className="p-3 text-slate-700 dark:text-slate-200">
+                    <td className="px-3 py-1 text-slate-500 dark:text-slate-400">{r.source}</td>
+                    <td className="px-3 py-1 font-mono text-sm">{r.event}</td>
+                    <td className="px-3 py-1 text-slate-700 dark:text-slate-200">
                       {r.message ?? (r.kind === 'event' ? [r.email, r.detail].filter(Boolean).join(' — ') : '—')}
                     </td>
                   </tr>
