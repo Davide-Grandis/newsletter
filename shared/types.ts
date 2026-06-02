@@ -18,6 +18,9 @@ export interface CampaignRow {
   sent_by: string;
   status: string;
   link_mode: number;
+  // Per-newsletter sender resolved via the campaign's newsletter. NULL means
+  // fall back to the global FROM_ADDRESS setting.
+  from_address: string | null;
 }
 
 export interface AttachmentRow {

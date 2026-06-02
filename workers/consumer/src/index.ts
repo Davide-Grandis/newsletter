@@ -115,7 +115,8 @@ export default {
             const text = campaign.text ?? '';
             const unsubUrl = unsubscribeUrl(env.TRACKING_BASE_URL, r.subscriberId, r.token);
             const messageId = `${crypto.randomUUID()}@${env.BOUNCE_DOMAIN}`;
-            const fromHeader = env.FROM_ADDRESS;
+            // Per-newsletter sender if set, otherwise the global default.
+            const fromHeader = campaign.from_address || env.FROM_ADDRESS;
             const fromAddr = extractAddr(fromHeader);
             const returnPath = `bounce+${campaignId}.${r.subscriberId}@${env.BOUNCE_DOMAIN}`;
 

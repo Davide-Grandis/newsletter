@@ -145,6 +145,32 @@ function validateSetting(key: string, val: string): string | null {
   return null; // free-form string keys
 }
 
+// Validates a per-newsletter sender. Accepts either "local@domain" or a
+// display-name form 'Name <local@domain>'. The mailbox domain must match the
+// configured sending domain (`BASE_DOMAIN`) so SPF/DKIM/DMARC stays aligned.
+// Returns the normalized header string, or an error message.
+function validateFromAddress(
+  raw: string,
+  baseDomain: string | undefined,
+): { value: string } | { error: string } {
+  const input = raw.trim();
+  const m = /<([^>]+)>\s*$/.exec(input);
+  const addr = (m ? m[1]! : input).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
+    return { error: 'valid from_address required' };
+  }
+  const domain = addr.slice(addr.indexOf('@') + 1);
+  if (baseDomain && domain !== baseDomain.toLowerCase()) {
+    return { error: `from_address must be on @${baseDomain}` };
+  }
+  // Preserve a display name if provided (e.g. 'News <news@domain>').
+  if (m) {
+    const name = input.slice(0, input.lastIndexOf('<')).trim();
+    return { value: name ? `${name} <${addr}>` : addr };
+  }
+  return { value: addr };
+}
+
 async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
@@ -246,7 +272,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
   if (m === 'GET' && p === '/api/newsletters') {
     const { results } = await env.DB
       .prepare(
-        `SELECT n.id, n.name, n.inbound_address, n.enabled, n.created_at, ` +
+        `SELECT n.id, n.name, n.inbound_address, n.from_address, n.enabled, n.created_at, ` +
           `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id) AS subscriber_count, ` +
           `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id AND s.status='active') AS active_count, ` +
           `(SELECT COUNT(*) FROM authors a WHERE a.newsletter_id = n.id) AS author_count ` +
@@ -257,18 +283,28 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
   }
 
   if (m === 'POST' && p === '/api/newsletters') {
-    const { name, inbound_address } = await req.json<{ name?: string; inbound_address?: string }>();
+    const { name, inbound_address, from_address } = await req.json<{
+      name?: string;
+      inbound_address?: string;
+      from_address?: string;
+    }>();
     const nm = (name ?? '').trim();
     const addr = (inbound_address ?? '').trim().toLowerCase();
     if (!nm) return Response.json({ error: 'name required' }, { status: 400 });
     if (!addr || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(addr)) {
       return Response.json({ error: 'valid inbound_address required' }, { status: 400 });
     }
+    let from: string | null = null;
+    if (typeof from_address === 'string' && from_address.trim() !== '') {
+      const r = validateFromAddress(from_address, rawEnv.BASE_DOMAIN);
+      if ('error' in r) return Response.json({ error: r.error }, { status: 400 });
+      from = r.value;
+    }
     const id = crypto.randomUUID();
     try {
       await env.DB
-        .prepare('INSERT INTO newsletters (id, name, inbound_address, enabled) VALUES (?, ?, ?, 1)')
-        .bind(id, nm, addr)
+        .prepare('INSERT INTO newsletters (id, name, inbound_address, from_address, enabled) VALUES (?, ?, ?, ?, 1)')
+        .bind(id, nm, addr, from)
         .run();
     } catch (err) {
       if (/UNIQUE/i.test((err as Error).message)) {
@@ -277,7 +313,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       throw err;
     }
     const routing_warning = await createRoutingRule(env, addr);
-    return Response.json({ id, name: nm, inbound_address: addr, enabled: 1, routing_warning }, { status: 201 });
+    return Response.json({ id, name: nm, inbound_address: addr, from_address: from, enabled: 1, routing_warning }, { status: 201 });
   }
 
   const nl = /^\/api\/newsletters\/([^/]+)(\/.*)?$/.exec(p);
@@ -290,7 +326,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       if (m === 'GET') {
         const row = await env.DB
           .prepare(
-            `SELECT n.id, n.name, n.inbound_address, n.enabled, n.created_at, ` +
+            `SELECT n.id, n.name, n.inbound_address, n.from_address, n.enabled, n.created_at, ` +
               `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id) AS subscriber_count, ` +
               `(SELECT COUNT(*) FROM subscribers s WHERE s.newsletter_id = n.id AND s.status='active') AS active_count, ` +
               `(SELECT COUNT(*) FROM authors a WHERE a.newsletter_id = n.id) AS author_count ` +
@@ -302,7 +338,12 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         return Response.json(row);
       }
       if (m === 'PATCH') {
-        const body = await req.json<{ name?: string; enabled?: boolean; inbound_address?: string }>();
+        const body = await req.json<{
+          name?: string;
+          enabled?: boolean;
+          inbound_address?: string;
+          from_address?: string | null;
+        }>();
         const sets: string[] = [];
         const binds: unknown[] = [];
         if (typeof body.name === 'string') {
@@ -314,6 +355,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         if (typeof body.enabled === 'boolean') {
           sets.push('enabled = ?');
           binds.push(body.enabled ? 1 : 0);
+        }
+        // from_address: a non-empty string sets the per-newsletter sender;
+        // null or an empty string clears it (falls back to global FROM_ADDRESS).
+        if (body.from_address === null || body.from_address === '') {
+          sets.push('from_address = ?');
+          binds.push(null);
+        } else if (typeof body.from_address === 'string') {
+          const r = validateFromAddress(body.from_address, rawEnv.BASE_DOMAIN);
+          if ('error' in r) return Response.json({ error: r.error }, { status: 400 });
+          sets.push('from_address = ?');
+          binds.push(r.value);
         }
         if (typeof body.inbound_address === 'string') {
           const addr = body.inbound_address.trim().toLowerCase();

@@ -22,7 +22,7 @@ export default function NewsletterDetail() {
   });
 
   const patch = useMutation({
-    mutationFn: (body: Partial<Pick<Newsletter, 'name' | 'inbound_address'>> & { enabled?: boolean }) =>
+    mutationFn: (body: Partial<Pick<Newsletter, 'name' | 'inbound_address' | 'from_address'>> & { enabled?: boolean }) =>
       api<{ routing_warning?: string }>(`/api/newsletters/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: (res) => {
       setWarn(res.routing_warning ?? null);
@@ -122,13 +122,17 @@ function Settings({
   onDelete,
 }: {
   n: Newsletter;
-  onSave: (body: { name?: string; inbound_address?: string }) => void;
+  onSave: (body: { name?: string; inbound_address?: string; from_address?: string | null }) => void;
   saving: boolean;
   onDelete: () => void;
 }) {
   const [name, setName] = useState(n.name);
   const [addr, setAddr] = useState(n.inbound_address);
-  const dirty = name.trim() !== n.name || addr.trim() !== n.inbound_address;
+  const [from, setFrom] = useState(n.from_address ?? '');
+  const dirty =
+    name.trim() !== n.name ||
+    addr.trim() !== n.inbound_address ||
+    from.trim() !== (n.from_address ?? '');
 
   return (
     <section className="bg-white border border-slate-200 rounded p-3 dark:bg-slate-900 dark:border-slate-800">
@@ -141,10 +145,23 @@ function Settings({
           <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Inbound address</label>
           <input value={addr} onChange={(e) => setAddr(e.target.value)} type="email" className={inputCls} />
         </div>
+        <div className="flex-1 min-w-[220px]">
+          <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Sender <span className="normal-case tracking-normal text-slate-400">(optional)</span>
+          </label>
+          <input
+            value={from}
+            onChange={(e) => setFrom(e.target.value)}
+            placeholder="falls back to default sender"
+            className={inputCls}
+          />
+        </div>
         <button
           type="button"
           disabled={!dirty || saving}
-          onClick={() => onSave({ name: name.trim(), inbound_address: addr.trim() })}
+          onClick={() =>
+            onSave({ name: name.trim(), inbound_address: addr.trim(), from_address: from.trim() })
+          }
           className="bg-slate-900 text-white text-sm rounded px-3 py-1.5 disabled:opacity-50 dark:bg-slate-100 dark:text-slate-900"
         >
           {saving ? 'Saving…' : 'Save'}
@@ -159,6 +176,7 @@ function Settings({
       </div>
       <p className="text-xs text-slate-400 dark:text-slate-500 mt-2">
         Inbound mail to <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">{n.inbound_address}</code> is routed to the ingest worker automatically via an Email Routing rule.
+        The <strong>Sender</strong> is the outgoing <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">From:</code> for this newsletter (must be on the sending domain); leave empty to use the global default.
       </p>
     </section>
   );

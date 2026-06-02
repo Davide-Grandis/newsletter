@@ -39,7 +39,7 @@ export default function Newsletters() {
   }
 
   const create = useMutation({
-    mutationFn: (body: { name: string; inbound_address: string }) =>
+    mutationFn: (body: { name: string; inbound_address: string; from_address?: string }) =>
       api<{ routing_warning?: string }>('/api/newsletters', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: (res) => {
       setWarn(res.routing_warning ?? null);
@@ -62,10 +62,11 @@ export default function Newsletters() {
     const fd = new FormData(e.currentTarget);
     const name = String(fd.get('name') ?? '').trim();
     const inbound_address = String(fd.get('inbound_address') ?? '').trim();
+    const from_address = String(fd.get('from_address') ?? '').trim();
     if (!name || !inbound_address) return;
     const form = e.currentTarget;
     create.mutate(
-      { name, inbound_address },
+      { name, inbound_address, from_address: from_address || undefined },
       {
         onSuccess: () => form.reset(),
         onError: (e) => setErr((e as Error).message),
@@ -106,6 +107,16 @@ export default function Newsletters() {
             type="email"
             required
             placeholder="digest@eneanewsletter.it"
+            className={inputCls}
+          />
+        </div>
+        <div className="flex-1 min-w-[220px]">
+          <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">
+            Sender <span className="normal-case tracking-normal text-slate-400">(optional)</span>
+          </label>
+          <input
+            name="from_address"
+            placeholder="News <digest@eneanewsletter.it>"
             className={inputCls}
           />
         </div>

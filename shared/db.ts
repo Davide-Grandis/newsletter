@@ -12,7 +12,11 @@ import type { CampaignRow, AttachmentRow } from './types';
  */
 export async function getCampaign(db: D1Database, id: string): Promise<CampaignRow | null> {
   return await db
-    .prepare('SELECT id, subject, html, text, sent_by, status, link_mode FROM campaigns WHERE id = ?')
+    .prepare(
+      'SELECT c.id, c.subject, c.html, c.text, c.sent_by, c.status, c.link_mode, ' +
+        'n.from_address AS from_address ' +
+        'FROM campaigns c LEFT JOIN newsletters n ON n.id = c.newsletter_id WHERE c.id = ?',
+    )
     .bind(id)
     .first<CampaignRow>();
 }

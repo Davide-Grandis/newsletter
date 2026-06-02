@@ -9,6 +9,9 @@ CREATE TABLE IF NOT EXISTS newsletters (
   id              TEXT PRIMARY KEY,
   name            TEXT NOT NULL,
   inbound_address TEXT NOT NULL UNIQUE COLLATE NOCASE,
+  -- Optional per-newsletter sender (the outgoing `From:`). NULL falls back to
+  -- the global FROM_ADDRESS setting. Must be on the configured sending domain.
+  from_address    TEXT,
   enabled         INTEGER NOT NULL DEFAULT 1,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );

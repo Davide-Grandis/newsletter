@@ -56,6 +56,8 @@ export interface Newsletter {
   id: string;
   name: string;
   inbound_address: string;
+  // Optional per-newsletter sender. null => falls back to global FROM_ADDRESS.
+  from_address: string | null;
   enabled: 0 | 1;
   created_at: string;
   subscriber_count?: number;
