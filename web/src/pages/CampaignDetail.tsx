@@ -3,7 +3,8 @@ import { Link, useParams } from 'react-router-dom';
 import { Bar, BarChart, CartesianGrid, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { api, CampaignDetail as Detail, Page, Send, TimeseriesRow } from '../api';
 import { StatusPill } from './Subscribers';
-import { useState } from 'react';
+import { CampaignStatus } from './Campaigns';
+import { useState, type ReactNode } from 'react';
 
 export default function CampaignDetail() {
   const { id = '' } = useParams();
@@ -35,7 +36,7 @@ export default function CampaignDetail() {
       {detail.data && (
         <>
           <div className="grid grid-cols-2 md:grid-cols-6 gap-3">
-            <Stat label="Status" value={detail.data.campaign.status} />
+            <Stat label="Status" value={<CampaignStatus status={detail.data.campaign.status} />} />
             <Stat label="Recipients" value={detail.data.campaign.total_recipients} />
             <Stat label="Sent" value={detail.data.campaign.sent_count} ok />
             <Stat label="Failed" value={detail.data.campaign.failed_count} bad />
@@ -90,7 +91,7 @@ export default function CampaignDetail() {
   );
 }
 
-function Stat({ label, value, ok, bad }: { label: string; value: string | number; ok?: boolean; bad?: boolean }) {
+function Stat({ label, value, ok, bad }: { label: string; value: ReactNode; ok?: boolean; bad?: boolean }) {
   const cls = ok ? 'text-emerald-700 dark:text-emerald-400' : bad ? 'text-red-700 dark:text-red-400' : 'text-slate-900 dark:text-slate-100';
   return (
     <div className="bg-white rounded border border-slate-200 p-3 dark:bg-slate-900 dark:border-slate-800">
