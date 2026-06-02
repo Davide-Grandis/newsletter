@@ -9,7 +9,7 @@ export default function Bounces() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h1 className="text-xl font-semibold">Recent bounces (7d)</h1>
       {isLoading ? (
         <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>

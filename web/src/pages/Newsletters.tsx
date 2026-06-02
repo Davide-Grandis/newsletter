@@ -96,7 +96,7 @@ export default function Newsletters() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">
           Newsletters
@@ -106,7 +106,7 @@ export default function Newsletters() {
             </span>
           )}
         </h1>
-        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400">
+        <p className="text-sm text-slate-500 mt-2 dark:text-slate-400">
           <span className="inline-block max-w-3xl">
             Each newsletter is an independent mailing list with its own inbound address, authors and
             subscribers.

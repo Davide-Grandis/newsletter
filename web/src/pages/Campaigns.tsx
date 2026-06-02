@@ -9,7 +9,7 @@ export default function Campaigns() {
   });
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <h1 className="text-xl font-semibold">Campaigns</h1>
       {isLoading ? (
         <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>

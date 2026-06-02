@@ -174,7 +174,7 @@ export default function Settings() {
     <div className="space-y-6">
       <div>
         <h1 className="text-xl font-semibold">Settings</h1>
-        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
+        <p className="text-sm text-slate-500 mt-2 dark:text-slate-400 max-w-3xl">
           Global runtime configuration.
           <br />
           Saved values are stored in the database and override the built-in default located in{' '}

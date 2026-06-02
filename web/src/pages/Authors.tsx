@@ -45,10 +45,10 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div>
         <h2 className="text-base font-medium">Authorized authors</h2>
-        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400">
+        <p className="text-sm text-slate-500 mt-2 dark:text-slate-400">
           Inbound emails to this newsletter's address are rejected unless the
           sender's address is listed here. Lookup is case-insensitive.
         </p>

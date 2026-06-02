@@ -35,7 +35,7 @@ export default function Help() {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-6">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold">Help</h1>
         {data?.updated && (
