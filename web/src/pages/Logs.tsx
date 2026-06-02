@@ -102,7 +102,7 @@ export default function Logs() {
                   <th className="text-left px-3 py-2 whitespace-nowrap">Time (UTC)</th>
                   <th className="text-left px-3 py-2">Level</th>
                   <th className="text-left px-3 py-2">Newsletter</th>
-                  <th className="text-left px-3 py-2">Campaign</th>
+                  <th className="text-left px-3 py-2 min-w-[20rem]">Campaign</th>
                   <th className="text-left px-3 py-2">Source</th>
                   <th className="text-left px-3 py-2">Event</th>
                   <th className="text-left px-3 py-2">Description</th>
