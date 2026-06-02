@@ -2,6 +2,7 @@ import { useInfiniteQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState, type FormEvent } from 'react';
 import { api, LogRow, Page } from '../api';
+import { RefreshIcon } from './Dashboard';
 
 const SOURCES = ['', 'ingest', 'consumer', 'tracker', 'bounce', 'admin'];
 const LEVELS = ['', 'info', 'warn', 'error'];
@@ -36,7 +37,18 @@ export default function Logs() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-xl font-semibold">Logs</h1>
+        <div className="flex items-center justify-between">
+          <h1 className="text-xl font-semibold">Logs</h1>
+          <button
+            type="button"
+            onClick={() => logs.refetch()}
+            disabled={logs.isFetching}
+            className="inline-flex items-center gap-1.5 text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+          >
+            <RefreshIcon spinning={logs.isFetching} />
+            Refresh
+          </button>
+        </div>
         <p className="mt-3 text-sm text-slate-500 dark:text-slate-400 max-w-3xl">
           Unified activity feed across the whole pipeline: the ingest worker firing on inbound
           email, queue enqueue details, and consumer send activity — merged with recipient
@@ -75,13 +87,6 @@ export default function Logs() {
           className="text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
         >
           Search
-        </button>
-        <button
-          type="button"
-          onClick={() => logs.refetch()}
-          className="text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
-        >
-          Refresh
         </button>
       </form>
 

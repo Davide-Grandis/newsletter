@@ -239,7 +239,7 @@ function QuotaBar({ label, used, cap, subtitle }: { label: string; used: number;
   );
 }
 
-function RefreshIcon({ spinning }: { spinning?: boolean }) {
+export function RefreshIcon({ spinning }: { spinning?: boolean }) {
   return (
     <svg
       width="14"
