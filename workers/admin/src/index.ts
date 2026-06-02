@@ -205,27 +205,26 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
   // -------- global runtime settings --------
 
   // Returns every configurable key with its effective value and provenance so
-  // the Settings page can show what is overridden vs. falling back to env/default.
+  // the Settings page can show what is overridden vs. falling back to the
+  // built-in default. Resolution is two-level: D1 `settings` row -> default.
   if (p === '/api/settings' && m === 'GET') {
     const stored = await readStoredSettings(rawEnv.DB);
-    const raw = rawEnv as unknown as Record<string, string | undefined>;
     const items = SETTING_KEYS.map((key) => {
       const dbVal = stored.get(key) ?? null;
-      const envVal = typeof raw[key] === 'string' && raw[key] !== '' ? (raw[key] as string) : null;
       const def = SETTINGS_DEFAULTS[key];
       return {
         key,
-        value: dbVal ?? envVal ?? def,
+        value: dbVal ?? def,
         stored: dbVal,
-        fallback: envVal ?? def,
-        source: dbVal != null ? 'db' : envVal != null ? 'env' : 'default',
+        fallback: def,
+        source: dbVal != null ? 'db' : 'default',
       };
     });
     return Response.json({ settings: items });
   }
 
   // Upserts (or, when a value is null, clears) settings. Clearing a key makes
-  // it fall back to the worker env var / built-in default again.
+  // it fall back to the built-in default again.
   if (p === '/api/settings' && m === 'PUT') {
     const body = await req.json<{ updates?: Record<string, string | null> }>();
     const updates = body.updates ?? {};
@@ -302,7 +301,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     if (dupe) return Response.json({ error: 'a newsletter with this name already exists' }, { status: 409 });
     let from: string | null = null;
     if (typeof from_address === 'string' && from_address.trim() !== '') {
-      const r = validateFromAddress(from_address, rawEnv.BASE_DOMAIN);
+      const r = validateFromAddress(from_address, env.BASE_DOMAIN);
       if ('error' in r) return Response.json({ error: r.error }, { status: 400 });
       from = r.value;
     }
@@ -378,7 +377,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           sets.push('from_address = ?');
           binds.push(null);
         } else if (typeof body.from_address === 'string') {
-          const r = validateFromAddress(body.from_address, rawEnv.BASE_DOMAIN);
+          const r = validateFromAddress(body.from_address, env.BASE_DOMAIN);
           if ('error' in r) return Response.json({ error: r.error }, { status: 400 });
           sets.push('from_address = ?');
           binds.push(r.value);

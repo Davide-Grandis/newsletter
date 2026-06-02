@@ -2,8 +2,8 @@ name = "newsletter-cleanup"
 main = "src/index.ts"
 compatibility_date = "2025-01-15"
 
-[vars]
-RETENTION_DAYS = "90"
+# RETENTION_DAYS resolves from the D1 `settings` table, falling back to the
+# built-in default in shared/settings.ts.
 
 [[d1_databases]]
 binding = "DB"

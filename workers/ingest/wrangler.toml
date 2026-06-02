@@ -3,15 +3,9 @@ main = "src/index.ts"
 compatibility_date = "2025-01-15"
 compatibility_flags = ["nodejs_compat"]
 
-[vars]
-# Author allow-list lives in the D1 `authors` table (managed via the admin worker).
-BATCH_SIZE = "100"
-MAX_ATTACHMENT_BYTES = "10485760"            # 10 MB
-MAX_TOTAL_ATTACHMENT_BYTES = "20971520"      # 20 MB
-MAX_ATTACHMENT_COUNT = "10"
-ALLOWED_MIME = "image/*,application/pdf,text/plain,text/csv,application/zip"
-BLOCKED_EXTENSIONS = "exe,js,bat,cmd,scr,com,vbs,ps1"
-ATTACHMENT_LINK_THRESHOLD_BYTES = "8388608"  # 8 MB -> switch to link mode
+# Tunables (batch size, attachment limits, MIME rules, etc.) resolve from the
+# D1 `settings` table, falling back to the built-in defaults in
+# shared/settings.ts. The author allow-list lives in the D1 `authors` table.
 
 [[d1_databases]]
 binding = "DB"

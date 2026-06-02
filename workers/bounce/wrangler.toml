@@ -3,9 +3,8 @@ main = "src/index.ts"
 compatibility_date = "2025-01-15"
 compatibility_flags = ["nodejs_compat"]
 
-[vars]
-HARD_BOUNCE_THRESHOLD = "1"   # mark bounced after N hard bounces
-SOFT_BOUNCE_THRESHOLD = "5"
+# Bounce thresholds resolve from the D1 `settings` table, falling back to the
+# built-in defaults in shared/settings.ts.
 
 [[d1_databases]]
 binding = "DB"

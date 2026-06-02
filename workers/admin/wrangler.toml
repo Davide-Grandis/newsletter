@@ -7,29 +7,14 @@ compatibility_date = "2025-01-15"
 # `console.eneanewsletter.it`; this route creates it automatically.
 routes = [{ pattern = "console.eneanewsletter.it", custom_domain = true }]
 
-# Mirror the consumer's warmup config so /api/quota can compute the same caps,
-# and the sending-identity vars so the Settings page shows their real defaults
-# (these otherwise live only on the consumer). Editing them in the console
-# writes to the D1 `settings` table, which every worker reads at runtime.
-[vars]
-FROM_ADDRESS = "Newsletter <newsletter@eneanewsletter.it>"
-TRACKING_BASE_URL = "https://track.eneanewsletter.it"
-BOUNCE_DOMAIN = "eneanewsletter.it"
-WARMUP_START_DATE = ""                                    # e.g. "2026-01-06"
-WARMUP_TARGET_WEEKLY = "50000"
-WARMUP_SCHEDULE = "[500, 1500, 5000, 12000, 25000, 40000]"
-WARMUP_DAILY_CAP_EARLY = "5000"
-WARMUP_DAILY_CAP_LATE = "10000"
-WARMUP_LATE_START_WEEK = "5"
-
-# Email Routing automation. The admin worker creates/updates/deletes an Email
-# Routing rule (inbound_address -> ingest worker) whenever a newsletter is
-# managed. Requires the CF_API_TOKEN secret (Email Routing Rules: Edit on this
-# zone), set via `wrangler secret put CF_API_TOKEN`.
-EMAIL_ROUTING_ZONE_ID = "48ea553ff7c20557f7596ba55eb4cb5e"
-INGEST_WORKER_NAME = "newsletter-ingest"
-# Newsletter domain, used as the default for inbound-address hints in the GUI.
-BASE_DOMAIN = "eneanewsletter.it"
+# Tunables (sending identity, warmup config, Email Routing zone/worker, base
+# domain, etc.) are no longer declared as vars here. They resolve from the D1
+# `settings` table, falling back to the built-in defaults in shared/settings.ts;
+# edit them there or in the console (which writes to the settings table).
+#
+# Email Routing automation (create/update/delete a rule inbound_address ->
+# ingest worker on newsletter changes) additionally requires the CF_API_TOKEN
+# secret (Email Routing Rules: Edit), set via `wrangler secret put CF_API_TOKEN`.
 
 [[d1_databases]]
 binding = "DB"

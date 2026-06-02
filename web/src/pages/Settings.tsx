@@ -176,8 +176,8 @@ export default function Settings() {
         <h1 className="text-xl font-semibold">Settings</h1>
         <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
           Global runtime configuration. Values are locked by default — click <strong>Edit</strong>{' '}
-          to change one. A saved value overrides the corresponding worker environment variable;
-          resetting it falls back to the deployment default. Secrets (signing keys, API tokens)
+          to change one. A saved value is stored in the database and overrides the built-in
+          default; resetting it falls back to that default. Secrets (signing keys, API tokens)
           and infrastructure bindings are managed via Wrangler and are not editable here.
         </p>
       </div>
@@ -243,7 +243,7 @@ export default function Settings() {
                       {s && s.source === 'db' ? (
                         <span>overrides default “{s.fallback || '∅'}”</span>
                       ) : (
-                        s && <span>default (from {s.source === 'env' ? 'worker env' : 'built-in'})</span>
+                        s && <span>built-in default</span>
                       )}
                       {editing && fieldError && (
                         <span className="text-red-600">{fieldError}</span>
