@@ -44,7 +44,7 @@ export default function Dashboard() {
         <Card label="Unsubscribed / bounced" value={(subTotals.unsubscribed ?? 0) + (subTotals.bounced ?? 0)} sub={`${subTotals.bounced ?? 0} bounced`} />
       </div>
 
-      {quota.data && <QuotaPanel q={quota.data} />}
+      {quota.data?.enabled && <QuotaPanel q={quota.data} />}
 
       <h2 className="text-base font-medium">Last 7 days</h2>
       <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
