@@ -177,8 +177,10 @@ export default function Settings() {
         <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
           Global runtime configuration. Values are locked by default — click <strong>Edit</strong>{' '}
           to change one. A saved value is stored in the database and overrides the built-in
-          default; resetting it falls back to that default. Secrets (signing keys, API tokens)
-          and infrastructure bindings are managed via Wrangler and are not editable here.
+          default; resetting it falls back to that default. The built-in defaults live in{' '}
+          <code className="bg-slate-100 px-1 rounded dark:bg-slate-800">shared/settings.ts</code>.
+          Secrets (signing keys, API tokens) and infrastructure bindings are managed via Wrangler
+          and are not editable here.
         </p>
       </div>
 
