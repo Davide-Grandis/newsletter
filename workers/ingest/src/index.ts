@@ -8,6 +8,7 @@ import {
   type AttachmentInput,
   type AttachmentLimits,
 } from '../../../shared/attachments';
+import { estimateRawSize } from '../../../shared/mime';
 import { iterateActiveSubscribers, writeLog } from '../../../shared/db';
 import { loadSettings } from '../../../shared/settings';
 import type { QueueMessage, Recipient } from '../../../shared/types';
@@ -23,6 +24,7 @@ export interface Env {
   ALLOWED_MIME: string;
   BLOCKED_EXTENSIONS: string;
   ATTACHMENT_LINK_THRESHOLD_BYTES: string;
+  MAX_RAW_BYTES: string;
 }
 
 export default {
@@ -144,6 +146,30 @@ export default {
     const campaignId = crypto.randomUUID();
     const totalAttBytes = inputs.reduce((s, a) => s + a.bytes.byteLength, 0);
     const linkMode = totalAttBytes > Number(env.ATTACHMENT_LINK_THRESHOLD_BYTES);
+
+    // Primary message-size guard. The final MIME size is a campaign-level
+    // property (the per-recipient tracking/unsubscribe delta is negligible), so
+    // we estimate it once here — before persisting the campaign or fanning out
+    // to the queue — and reject oversize mail back to the author. In link mode
+    // large attachments are served as links, so they don't count toward the raw
+    // size; only inline parts (and html/text) do.
+    const sizeParts = inputs.filter((a) => !linkMode || a.disposition === 'inline');
+    const estimate = estimateRawSize(text.length, html.length, sizeParts);
+    if (estimate > Number(env.MAX_RAW_BYTES)) {
+      await writeLog(env.DB, {
+        level: 'warn',
+        source: 'ingest',
+        event: 'ingest.rejected',
+        newsletterId,
+        message: `Rejected: message too large (~${estimate} bytes; limit ${env.MAX_RAW_BYTES})`,
+        detail: { reason: 'message_too_large', estimate, limit: Number(env.MAX_RAW_BYTES), linkMode },
+      });
+      message.setReject(
+        `Message too large: estimated ${estimate} bytes exceeds the ${env.MAX_RAW_BYTES}-byte limit. ` +
+          'Reduce the content or attachment size and resend.',
+      );
+      return;
+    }
 
     await env.ARCHIVE.put(`campaigns/${campaignId}/raw.eml`, raw);
     await env.DB

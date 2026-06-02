@@ -129,7 +129,24 @@ export default {
           parts,
         );
         if (estimate > Number(env.MAX_RAW_BYTES)) {
-          throw new Error(`message too large (${estimate} bytes)`);
+          // Oversize is a permanent, campaign-level condition (normally caught
+          // at ingest). Retrying can never succeed, so record the recipients as
+          // failed and ack the batch instead of looping into the DLQ.
+          const reason = `message too large (${estimate} bytes; limit ${env.MAX_RAW_BYTES})`;
+          for (const r of recipients) {
+            await recordSendFailure(env.DB, campaignId, r.subscriberId, reason);
+          }
+          await writeLog(env.DB, {
+            level: 'error',
+            source: 'consumer',
+            event: 'consumer.batch_too_large',
+            campaignId,
+            message: `Batch dropped — ${reason}`,
+            detail: { estimate, limit: Number(env.MAX_RAW_BYTES), recipients: recipients.length },
+          });
+          await markCampaignCompleteIfDone(env.DB, campaignId);
+          msg.ack();
+          continue;
         }
 
         let sentInBatch = 0;
