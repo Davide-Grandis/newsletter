@@ -107,3 +107,14 @@ CREATE TABLE IF NOT EXISTS events (
   ip             TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_events_campaign_type ON events(campaign_id, type);
+
+-- Admin console users. Identity is provided by Cloudflare Access; this table
+-- only stores per-user UI preferences so the chosen theme follows the user
+-- across devices/browsers. A row is created on first login, seeded with the
+-- theme the client detected (OS preference) at that time.
+CREATE TABLE IF NOT EXISTS admins (
+  email      TEXT PRIMARY KEY COLLATE NOCASE,
+  theme      TEXT NOT NULL DEFAULT 'light' CHECK (theme IN ('light','dark')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

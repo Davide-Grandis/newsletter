@@ -58,9 +58,20 @@ export default {
     if (req.method === 'GET' && url.pathname === '/api/me') {
       const email = req.headers.get('cf-access-authenticated-user-email');
       const name = req.headers.get('cf-access-authenticated-user-name');
+      // Stored UI preference (null when no admin row exists yet — the client
+      // then seeds it via PUT /api/preferences with its detected OS theme).
+      let theme: string | null = null;
+      if (email) {
+        const row = await env.DB
+          .prepare('SELECT theme FROM admins WHERE email = ?')
+          .bind(email.toLowerCase())
+          .first<{ theme: string }>();
+        theme = row?.theme ?? null;
+      }
       return Response.json({
         email: email ?? null,
         name: name ?? null,
+        theme,
         protected_by_access: Boolean(email),
       });
     }
@@ -90,6 +101,28 @@ export default {
 async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
+
+  // -------- current user's UI preferences --------
+
+  // Persist the signed-in admin's theme. Creates the admin row on first write
+  // (seeded with the supplied theme) and updates it thereafter. The email is
+  // taken from the Access header, so a user can only change their own setting.
+  if (p === '/api/preferences' && m === 'PUT') {
+    const email = (req.headers.get('cf-access-authenticated-user-email') ?? '').toLowerCase();
+    if (!email) return Response.json({ error: 'unauthorized' }, { status: 401 });
+    const { theme } = await req.json<{ theme?: string }>();
+    if (theme !== 'light' && theme !== 'dark') {
+      return Response.json({ error: 'theme must be "light" or "dark"' }, { status: 400 });
+    }
+    await env.DB
+      .prepare(
+        "INSERT INTO admins (email, theme) VALUES (?, ?) " +
+          "ON CONFLICT(email) DO UPDATE SET theme = excluded.theme, updated_at = datetime('now')",
+      )
+      .bind(email, theme)
+      .run();
+    return Response.json({ ok: true, theme });
+  }
 
   // -------- newsletters --------
 

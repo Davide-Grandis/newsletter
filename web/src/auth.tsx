@@ -7,6 +7,8 @@ import { useQuery } from '@tanstack/react-query';
 export interface Identity {
   email: string | null;
   name: string | null;
+  // Stored UI theme preference, or null when the admin has no saved row yet.
+  theme: 'light' | 'dark' | null;
   protected_by_access: boolean;
 }
 

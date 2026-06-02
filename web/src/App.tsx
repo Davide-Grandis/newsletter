@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Navigate, NavLink, Outlet, Route, Routes } from 'react-router-dom';
 import { logoutAccess, useIdentity } from './auth';
-import { useTheme } from './theme';
+import { useTheme, type Theme } from './theme';
+import { api } from './api';
 import Dashboard from './pages/Dashboard';
 import Newsletters from './pages/Newsletters';
 import NewsletterDetail from './pages/NewsletterDetail';
@@ -35,11 +36,36 @@ const NAV_ITEMS = [
   { to: '/help', label: 'Help', end: false },
 ];
 
+function saveTheme(theme: Theme) {
+  // Fire-and-forget; a failed save just means the preference isn't synced yet.
+  api('/api/preferences', { method: 'PUT', body: JSON.stringify({ theme }) }).catch(() => {});
+}
+
 function Layout() {
   const me = useIdentity();
   const display = me.data?.name?.trim() || me.data?.email || null;
   const [open, setOpen] = useState(true);
-  const { theme, toggle } = useTheme();
+  const { theme, setTheme } = useTheme();
+
+  // Apply the user's stored preference once their identity loads. The server
+  // is the source of truth (so the theme follows the user across devices). If
+  // no preference exists yet, seed it with the current (OS-detected) theme.
+  const synced = useRef(false);
+  useEffect(() => {
+    if (synced.current || !me.data?.email) return;
+    synced.current = true;
+    if (me.data.theme === 'light' || me.data.theme === 'dark') {
+      setTheme(me.data.theme);
+    } else {
+      saveTheme(theme);
+    }
+  }, [me.data, theme, setTheme]);
+
+  function toggleTheme() {
+    const next: Theme = theme === 'dark' ? 'light' : 'dark';
+    setTheme(next);
+    if (me.data?.email) saveTheme(next);
+  }
 
   return (
     <div className="h-screen flex flex-col">
@@ -80,7 +106,7 @@ function Layout() {
               </span>
             )}
             <button
-              onClick={toggle}
+              onClick={toggleTheme}
               aria-label={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               title={theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
               className="p-2 rounded text-slate-500 hover:text-slate-900 hover:bg-slate-100 dark:hover:text-slate-100 dark:hover:bg-slate-800"
