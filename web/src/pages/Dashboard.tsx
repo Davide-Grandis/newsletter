@@ -4,7 +4,7 @@ import { api, Overview, Quota } from '../api';
 import { CampaignStatus } from './Campaigns';
 
 export default function Dashboard() {
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api<Overview>('/api/stats/overview'),
   });
@@ -13,6 +13,11 @@ export default function Dashboard() {
     queryFn: () => api<Quota>('/api/quota'),
     refetchInterval: 60_000,
   });
+  const refreshing = isFetching || quota.isFetching;
+  const refresh = () => {
+    refetch();
+    quota.refetch();
+  };
 
   if (isLoading) return <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>;
   if (error) return <div className="text-sm text-red-600">{(error as Error).message}</div>;
@@ -42,7 +47,18 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-xl font-semibold">Overview</h1>
+      <div className="flex items-center justify-between">
+        <h1 className="text-xl font-semibold">Overview</h1>
+        <button
+          type="button"
+          onClick={refresh}
+          disabled={refreshing}
+          className="inline-flex items-center gap-1.5 text-sm border border-slate-200 rounded px-3 py-1.5 bg-white hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+        >
+          <RefreshIcon spinning={refreshing} />
+          Refresh
+        </button>
+      </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card label="Newsletters" value={nls.length} sub={`${enabledCount} enabled`} />
         <Card label="Active subscribers" value={subTotals.active ?? 0} sub={`${totalSubs.toLocaleString()} total`} />
@@ -188,6 +204,26 @@ function QuotaBar({ label, used, cap, subtitle }: { label: string; used: number;
       </div>
       <div className="text-xs text-slate-500 mt-1 dark:text-slate-400">{subtitle}</div>
     </div>
+  );
+}
+
+function RefreshIcon({ spinning }: { spinning?: boolean }) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={spinning ? 'animate-spin' : ''}
+      aria-hidden
+    >
+      <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+      <path d="M21 3v6h-6" />
+    </svg>
   );
 }
 
