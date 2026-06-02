@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Navigate, NavLink, Outlet, Route, Routes } from 'react-router-dom';
+import { Navigate, NavLink, Outlet, Route, Routes, useLocation } from 'react-router-dom';
 import { logoutAccess, useIdentity } from './auth';
 import { useTheme, type Theme } from './theme';
 import { api } from './api';
@@ -52,6 +52,10 @@ function Layout() {
   const display = me.data?.name?.trim() || me.data?.email || null;
   const [open, setOpen] = useState(true);
   const { theme, setTheme } = useTheme();
+  // Analytics shows a wide multi-column table, so it gets extra width; every
+  // other page keeps the standard reading width.
+  const { pathname } = useLocation();
+  const contentWidth = pathname.startsWith('/logs') ? 'max-w-screen-2xl' : 'max-w-6xl';
 
   // Apply the user's stored preference once their identity loads. The server
   // is the source of truth (so the theme follows the user across devices). If
@@ -145,7 +149,7 @@ function Layout() {
         </aside>
 
         <main className="flex-1 min-w-0 overflow-y-auto px-4 py-6">
-          <div className="max-w-screen-2xl w-full mx-auto">
+          <div className={`${contentWidth} w-full mx-auto`}>
             <Outlet />
           </div>
         </main>
