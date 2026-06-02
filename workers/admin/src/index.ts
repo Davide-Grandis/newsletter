@@ -864,10 +864,26 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         "SELECT type, COUNT(*) AS n FROM events WHERE ts > datetime('now','-7 days') GROUP BY type",
       )
       .all();
+    // Per-newsletter breakdown: the system is multi-tenant, so the dashboard
+    // shows each newsletter's own subscriber/campaign counts.
+    const perNl = await env.DB
+      .prepare(
+        'SELECT n.id, n.name, n.enabled, ' +
+          "COUNT(DISTINCT s.id) AS subscribers, " +
+          "COUNT(DISTINCT CASE WHEN s.status = 'active' THEN s.id END) AS active, " +
+          'COUNT(DISTINCT c.id) AS campaigns ' +
+          'FROM newsletters n ' +
+          'LEFT JOIN subscribers s ON s.newsletter_id = n.id ' +
+          'LEFT JOIN campaigns c ON c.newsletter_id = n.id ' +
+          'GROUP BY n.id, n.name, n.enabled ' +
+          'ORDER BY n.name COLLATE NOCASE',
+      )
+      .all<{ id: string; name: string; enabled: number; subscribers: number; active: number; campaigns: number }>();
     return Response.json({
       subscribers: subs.results ?? [],
       campaigns: camps,
       events_last_7d: last7.results ?? [],
+      newsletters: perNl.results ?? [],
     });
   }
 
