@@ -264,8 +264,8 @@ function Th({
       type="button"
       onClick={() => onSort(sortKey)}
       className={`inline-flex items-center gap-1 select-none hover:text-slate-900 dark:hover:text-slate-100 ${
-        align === 'right' ? 'flex-row-reverse' : ''
-      } ${active ? 'text-slate-900 dark:text-slate-100' : ''}`}
+        active ? 'text-slate-900 dark:text-slate-100' : ''
+      }`}
     >
       {label}
       <SortIcon state={active ? sort.dir : 'none'} />
