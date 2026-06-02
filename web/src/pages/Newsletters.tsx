@@ -106,12 +106,15 @@ export default function Newsletters() {
             </span>
           )}
         </h1>
-        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400 max-w-3xl">
-          Each newsletter is an independent mailing list with its own inbound address, authors and
-          subscribers.
+        <p className="text-sm text-slate-500 mt-1 dark:text-slate-400">
+          <span className="inline-block max-w-3xl">
+            Each newsletter is an independent mailing list with its own inbound address, authors and
+            subscribers.
+          </span>
           <br />
-          Creating, renaming or deleting a newsletter automatically synchronizes the
-          matching Cloudflare Email Routing rule (inbound address → ingest worker).
+          <span className="whitespace-nowrap">
+            Creating, renaming or deleting a newsletter automatically synchronizes the matching Cloudflare Email Routing rule (inbound address → ingest worker).
+          </span>
         </p>
       </div>
 
