@@ -181,6 +181,16 @@ Email Routing / Email Sending setup from [*Prerequisites*](#prerequisites):
 The defaults ship configured for `eneanewsletter.it`; change them for any other
 deployment.
 
+**Why `EMAIL_ROUTING_ZONE_ID`?** When a newsletter is created, renamed or
+deleted, the admin worker automatically creates/moves/deletes the matching Email
+Routing rule (newsletter inbound address → ingest worker). Cloudflare's Email
+Routing API is scoped per zone, so this automation needs the zone ID to know
+which zone's routing table to edit — together with the `CF_API_TOKEN` secret
+(Zone → Email Routing Rules → Edit) for permission and `INGEST_WORKER_NAME` as
+the rule's target. It is **not** needed for sending: if the zone ID or token is
+unset, newsletter management still works but routing rules are not synced (the
+console warns and you must add each rule manually in the Cloudflare dashboard).
+
 ## Configuration knobs
 
 The remaining tunables (batch size, attachment limits,

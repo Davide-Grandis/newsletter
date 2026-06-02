@@ -138,6 +138,22 @@ database and overrides the built-in default (defined in `shared/settings.ts`);
 **Reset** reverts a field to that default. Values left unset fall back to the
 built-in default.
 
+### Why the Email Routing zone ID is needed
+
+When you create, rename or delete a newsletter, the console automatically
+creates/moves/deletes the matching **Email Routing rule** that forwards the
+newsletter's inbound address to the ingest worker — so authors can email a new
+newsletter without anyone touching the Cloudflare dashboard. Cloudflare's Email
+Routing API is **scoped per zone**, so this automation needs the **Email Routing
+zone ID** to know which zone's routing table to edit (together with the
+`CF_API_TOKEN` secret for permission, and **Ingest worker name** as the rule's
+target).
+
+It is only needed for that automation, not for sending. If you leave it unset
+(or omit the token), newsletter management still works, but routing rules are
+**not** synced: the console shows a warning and you must add each newsletter's
+Email Routing rule manually in the Cloudflare dashboard.
+
 ## Requirements
 
 - **Cloudflare Access** — the console must sit behind an Access application. It

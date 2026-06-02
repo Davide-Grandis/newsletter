@@ -25,7 +25,7 @@ const SECTIONS: Section[] = [
     description:
       'Identifiers the admin worker uses to keep Email Routing rules in sync. Changing these takes effect immediately for new newsletter operations.',
     fields: [
-      { key: 'EMAIL_ROUTING_ZONE_ID', label: 'Email Routing zone ID', help: 'Cloudflare zone whose Email Routing forwards inbound mail to the ingest worker.' },
+      { key: 'EMAIL_ROUTING_ZONE_ID', label: 'Email Routing zone ID', help: 'Used to auto-manage Email Routing rules (each newsletter\u2019s inbound address \u2192 ingest worker). If unset, add the routing rules manually.' },
       { key: 'INGEST_WORKER_NAME', label: 'Ingest worker name', help: 'Worker script that Email Routing rules forward inbound mail to.' },
       { key: 'BASE_DOMAIN', label: 'Base domain', help: 'Domain newsletters receive mail on (e.g. example.com). Used for inbound-address hints.' },
     ],
