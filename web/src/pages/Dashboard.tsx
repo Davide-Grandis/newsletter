@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, Overview, Quota } from '../api';
+import { api, Overview, Quota, Page, Campaign } from '../api';
 import { CampaignStatus } from './Campaigns';
 
 export default function Dashboard() {
@@ -13,10 +13,15 @@ export default function Dashboard() {
     queryFn: () => api<Quota>('/api/quota'),
     refetchInterval: 60_000,
   });
-  const refreshing = isFetching || quota.isFetching;
+  const campaigns = useQuery({
+    queryKey: ['overview-campaigns'],
+    queryFn: () => api<Page<Campaign>>('/api/campaigns?limit=12'),
+  });
+  const refreshing = isFetching || quota.isFetching || campaigns.isFetching;
   const refresh = () => {
     refetch();
     quota.refetch();
+    campaigns.refetch();
   };
 
   if (isLoading) return <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>;
@@ -28,11 +33,7 @@ export default function Dashboard() {
   const nls = data.newsletters ?? [];
   const enabledCount = nls.filter((n) => n.enabled === 1).length;
   const totalSubs = data.subscribers.reduce((a, s) => a + s.n, 0);
-  // Campaign status counts, ordered with running campaigns first so they lead.
-  const statusOrder = ['sending', 'queued', 'done', 'failed'];
-  const campStatus = [...(data.campaign_status ?? [])].sort(
-    (a, b) => statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status),
-  );
+  const recentCampaigns = campaigns.data?.items ?? [];
   // With many newsletters the overview shows only the most active ones; the
   // full list lives on the Newsletters page.
   const TOP_N = 12;
@@ -65,18 +66,6 @@ export default function Dashboard() {
         <Card label="Total campaigns" value={data.campaigns?.total ?? 0} sub={`${data.campaigns?.sent ?? 0} sent`} />
         <Card label="Unsubscribed / bounced" value={(subTotals.unsubscribed ?? 0) + (subTotals.bounced ?? 0)} sub={`${subTotals.bounced ?? 0} bounced`} />
       </div>
-
-      {campStatus.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400 mr-1">Campaigns by status</span>
-          {campStatus.map((c) => (
-            <span key={c.status} className="inline-flex items-center gap-1">
-              <CampaignStatus status={c.status} />
-              <span className="text-xs text-slate-500 dark:text-slate-400">{c.n.toLocaleString()}</span>
-            </span>
-          ))}
-        </div>
-      )}
 
       {quota.data?.enabled && <QuotaPanel q={quota.data} />}
 
@@ -140,6 +129,49 @@ export default function Dashboard() {
                     <td className="p-2 text-right tabular-nums">{n.active.toLocaleString()}</td>
                     <td className="p-2 text-right tabular-nums">{n.subscribers.toLocaleString()}</td>
                     <td className="p-2 text-right tabular-nums">{n.campaigns.toLocaleString()}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <div className="flex items-baseline justify-between mb-2">
+          <h2 className="text-base font-medium">Recent campaigns</h2>
+          {(data.campaigns?.total ?? 0) > 0 && (
+            <Link to="/campaigns" className="text-sm text-orange-600 hover:underline dark:text-orange-400">
+              View all {data.campaigns?.total ?? 0} →
+            </Link>
+          )}
+        </div>
+        {recentCampaigns.length === 0 ? (
+          <div className="text-sm text-slate-500 dark:text-slate-400">No campaigns yet.</div>
+        ) : (
+          <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+                <tr>
+                  <th className="text-left p-2">Subject</th>
+                  <th className="text-left p-2">Newsletter</th>
+                  <th className="text-left p-2">Status</th>
+                  <th className="text-right p-2">Recipients</th>
+                  <th className="text-right p-2">Sent</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentCampaigns.map((c) => (
+                  <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="p-2">
+                      <Link to={`/campaigns/${c.id}`} className="text-orange-600 hover:underline dark:text-orange-400">
+                        {c.subject || '(no subject)'}
+                      </Link>
+                    </td>
+                    <td className="p-2 text-slate-500 dark:text-slate-400">{c.newsletter_name ?? '—'}</td>
+                    <td className="p-2"><CampaignStatus status={c.status} /></td>
+                    <td className="p-2 text-right tabular-nums">{c.total_recipients.toLocaleString()}</td>
+                    <td className="p-2 text-right tabular-nums text-emerald-700 dark:text-emerald-400">{c.sent_count.toLocaleString()}</td>
                   </tr>
                 ))}
               </tbody>

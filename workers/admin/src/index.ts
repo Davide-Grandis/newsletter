@@ -864,9 +864,6 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         "SELECT type, COUNT(*) AS n FROM events WHERE ts > datetime('now','-7 days') GROUP BY type",
       )
       .all();
-    const campStatus = await env.DB
-      .prepare('SELECT status, COUNT(*) AS n FROM campaigns GROUP BY status')
-      .all<{ status: string; n: number }>();
     // Per-newsletter breakdown: the system is multi-tenant, so the dashboard
     // shows each newsletter's own subscriber/campaign counts.
     const perNl = await env.DB
@@ -885,7 +882,6 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     return Response.json({
       subscribers: subs.results ?? [],
       campaigns: camps,
-      campaign_status: campStatus.results ?? [],
       events_last_7d: last7.results ?? [],
       newsletters: perNl.results ?? [],
     });
