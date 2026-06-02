@@ -102,6 +102,7 @@ export default function Logs() {
                   <th className="text-left p-3 whitespace-nowrap">Time (UTC)</th>
                   <th className="text-left p-3">Level</th>
                   <th className="text-left p-3">Newsletter</th>
+                  <th className="text-left p-3">Campaign</th>
                   <th className="text-left p-3">Source</th>
                   <th className="text-left p-3">Event</th>
                   <th className="text-left p-3">Details</th>
@@ -113,27 +114,24 @@ export default function Logs() {
                     <td className="p-3 whitespace-nowrap text-slate-500 dark:text-slate-400">{r.ts}</td>
                     <td className="p-3"><LevelBadge level={r.level} /></td>
                     <td className="p-3 whitespace-nowrap text-slate-600 dark:text-slate-300">{r.newsletter_name ?? '—'}</td>
+                    <td className="p-3 whitespace-nowrap">
+                      {r.campaign_id ? (
+                        <Link to={`/campaigns/${r.campaign_id}`} className="font-mono text-sm text-slate-500 hover:underline dark:text-slate-400">
+                          {r.campaign_id.slice(0, 8)}…
+                        </Link>
+                      ) : (
+                        <span className="text-slate-400 dark:text-slate-600">—</span>
+                      )}
+                    </td>
                     <td className="p-3 text-slate-500 dark:text-slate-400">{r.source}</td>
                     <td className="p-3 font-mono text-sm">{r.event}</td>
-                    <td className="p-3">
-                      {r.message && <div className="text-slate-700 dark:text-slate-200">{r.message}</div>}
-                      <div className="flex flex-wrap gap-x-3 gap-y-0.5 text-sm text-slate-500 dark:text-slate-400">
-                        {r.email && <span className="font-mono">{r.email}</span>}
-                        {r.kind === 'event' && r.detail && <span className="truncate max-w-md">{r.detail}</span>}
-                        {r.campaign_id && (
-                          <Link to={`/campaigns/${r.campaign_id}`} className="font-mono hover:underline">
-                            campaign {r.campaign_id.slice(0, 8)}…
-                          </Link>
-                        )}
-                        {r.kind === 'log' && r.detail && (
-                          <span className="font-mono truncate max-w-md">{r.detail}</span>
-                        )}
-                      </div>
+                    <td className="p-3 text-slate-700 dark:text-slate-200">
+                      {r.message ?? (r.kind === 'event' ? [r.email, r.detail].filter(Boolean).join(' — ') : '—')}
                     </td>
                   </tr>
                 ))}
                 {items.length === 0 && (
-                  <tr><td colSpan={6} className="p-4 text-center text-slate-500 dark:text-slate-400">No log entries match.</td></tr>
+                  <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No log entries match.</td></tr>
                 )}
               </tbody>
             </table>
