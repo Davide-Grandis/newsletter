@@ -110,16 +110,12 @@ export default function Newsletters() {
           )}
         </h1>
         <p className="text-sm text-slate-500 mt-2 dark:text-slate-400">
-          <span className="inline-block max-w-3xl">
-            Each newsletter is an independent mailing list with its own inbound address, authors and
-            subscribers.
-          </span>
+          Each newsletter is an independent mailing list with its own inbound address, authors and
+          subscribers.
           <br />
-          <span className="inline-block max-w-3xl">
-            Creating, renaming, enabling/disabling or deleting a newsletter automatically synchronizes
-            the matching Cloudflare Email Routing rule, including disabling the rule when disabling a
-            newsletter here. In cases of conflicts the settings below here win.
-          </span>
+          Creating, renaming, enabling/disabling or deleting a newsletter automatically synchronizes
+          the matching Cloudflare Email Routing rule, including disabling the rule when disabling a
+          newsletter here. In cases of conflicts the settings below here win.
         </p>
       </div>
 
