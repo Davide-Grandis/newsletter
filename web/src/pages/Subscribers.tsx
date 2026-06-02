@@ -133,7 +133,13 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          value={q}
+          onChange={(e) => { setQ(e.target.value); setPage(0); }}
+          placeholder="Search email or name"
+          className={inputCls + ' flex-1 min-w-[16rem]'}
+        />
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(0); }} className={inputCls}>
           <option value="">All statuses</option>
           <option value="active">Active</option>
@@ -141,12 +147,6 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
           <option value="bounced">Bounced</option>
           <option value="complained">Complained</option>
         </select>
-        <input
-          value={q}
-          onChange={(e) => { setQ(e.target.value); setPage(0); }}
-          placeholder="Search email or name"
-          className={inputCls + ' flex-1'}
-        />
       </div>
 
       <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
