@@ -137,3 +137,25 @@ export async function recordSendFailure(
       .bind(campaignId),
   ]);
 }
+
+/**
+ * Flip a campaign from `sending` to `sent` once every recipient has been
+ * processed (delivered or failed). Safe to call after each queue batch: the
+ * conditional, single-statement UPDATE only matches the campaign that is still
+ * `sending` and whose `sent_count + failed_count` has reached
+ * `total_recipients`, so the last batch to finish performs the transition and
+ * concurrent/duplicate calls are no-ops.
+ */
+export async function markCampaignCompleteIfDone(
+  db: D1Database,
+  campaignId: string,
+): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE campaigns SET status = 'sent' " +
+        "WHERE id = ? AND status = 'sending' AND total_recipients > 0 " +
+        'AND sent_count + failed_count >= total_recipients',
+    )
+    .bind(campaignId)
+    .run();
+}

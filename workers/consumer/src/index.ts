@@ -1,7 +1,7 @@
 import { EmailMessage } from 'cloudflare:email';
 import { buildEmail, estimateRawSize, type AttachmentPart } from '../../../shared/mime';
 import { getAttachmentBytes } from '../../../shared/attachments';
-import { getCampaign, getCampaignAttachments, recordSendSuccess, recordSendFailure } from '../../../shared/db';
+import { getCampaign, getCampaignAttachments, recordSendSuccess, recordSendFailure, markCampaignCompleteIfDone } from '../../../shared/db';
 import { instrumentHtml, unsubscribeUrl, signDownloadUrl } from '../../../shared/tracking';
 import type { QueueMessage } from '../../../shared/types';
 import { readWarmupConfig, currentWindow, delayUntilNextWindow } from '../../../shared/warmup';
@@ -146,6 +146,8 @@ export default {
             await recordSendFailure(env.DB, campaignId, r.subscriberId, (err as Error).message);
           }
         }
+        // Once every recipient has been processed, mark the campaign sent.
+        await markCampaignCompleteIfDone(env.DB, campaignId);
         msg.ack();
       } catch (err) {
         console.error('batch error', err);
