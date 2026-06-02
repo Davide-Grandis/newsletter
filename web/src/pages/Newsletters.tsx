@@ -373,10 +373,10 @@ export function LocalPartInput({
         disabled={disabled}
         onChange={(e) => onChange(e.target.value.replace(/@.*$/, '').trimStart())}
         placeholder={placeholder}
-        className="flex-1 min-w-0 px-2 py-1 text-sm bg-transparent text-slate-900 outline-none disabled:cursor-not-allowed disabled:text-slate-500 dark:text-slate-100 dark:disabled:text-slate-400"
+        className="flex-[2] min-w-0 px-2 py-1 text-sm bg-transparent text-slate-900 outline-none disabled:cursor-not-allowed disabled:text-slate-500 dark:text-slate-100 dark:disabled:text-slate-400"
       />
       {domain && (
-        <span className="flex items-center px-2 text-sm text-slate-400 bg-slate-50 border-l border-slate-200 select-none dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-500">
+        <span className="flex-[3] min-w-0 flex items-center px-2 text-sm text-slate-400 bg-slate-50 border-l border-slate-200 select-none dark:bg-slate-800/60 dark:border-slate-700 dark:text-slate-500">
           @{domain}
         </span>
       )}
