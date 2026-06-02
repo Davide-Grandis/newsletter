@@ -105,7 +105,7 @@ export default function Logs() {
                   <th className="text-left px-3 py-2">Campaign</th>
                   <th className="text-left px-3 py-2">Source</th>
                   <th className="text-left px-3 py-2">Event</th>
-                  <th className="text-left px-3 py-2">Details</th>
+                  <th className="text-left px-3 py-2">Description</th>
                 </tr>
               </thead>
               <tbody>
