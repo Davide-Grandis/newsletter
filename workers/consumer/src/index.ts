@@ -165,12 +165,27 @@ export default {
             await env.SEND_EMAIL.send(email);
             await recordSendSuccess(env.DB, campaignId, r.subscriberId, messageId);
             sentInBatch++;
+            await writeLog(env.DB, {
+              source: 'consumer',
+              event: 'consumer.send_success',
+              campaignId,
+              message: `Sent to ${r.email}`,
+              detail: { email: r.email, subscriberId: r.subscriberId, messageId },
+            });
             // Track warmup consumption for subsequent messages in this batch.
             dailyRemaining--;
             weeklyRemaining--;
           } catch (err) {
             await recordSendFailure(env.DB, campaignId, r.subscriberId, (err as Error).message);
             failedInBatch++;
+            await writeLog(env.DB, {
+              level: 'error',
+              source: 'consumer',
+              event: 'consumer.send_failed',
+              campaignId,
+              message: `Failed to send to ${r.email}: ${(err as Error).message}`,
+              detail: { email: r.email, subscriberId: r.subscriberId, error: (err as Error).message },
+            });
           }
         }
         await writeLog(env.DB, {
