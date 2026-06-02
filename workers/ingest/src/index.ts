@@ -9,6 +9,7 @@ import {
   type AttachmentLimits,
 } from '../../../shared/attachments';
 import { iterateActiveSubscribers } from '../../../shared/db';
+import { loadSettings } from '../../../shared/settings';
 import type { QueueMessage, Recipient } from '../../../shared/types';
 
 export interface Env {
@@ -25,7 +26,11 @@ export interface Env {
 }
 
 export default {
-  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+  async email(message: ForwardableEmailMessage, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
+    // Resolve tunables (batch size, attachment limits) against the D1
+    // `settings` table, falling back to env vars then built-in defaults.
+    const env = await loadSettings(rawEnv.DB, rawEnv);
+
     // 1. Resolve the target newsletter from the recipient address.
     //    Email Routing points one address per newsletter at this worker; the
     //    recipient (`message.to`) is matched against `newsletters.inbound_address`
@@ -57,11 +62,15 @@ export default {
       message.setReject('Sender not authorized for this newsletter');
       return;
     }
-    const authResults = (message.headers.get('authentication-results') ?? '').toLowerCase();
-    if (!/spf=pass/.test(authResults) || !/dkim=pass/.test(authResults)) {
-      message.setReject('SPF/DKIM verification failed');
-      return;
-    }
+
+    // Sender authentication is enforced by Cloudflare Email Routing at the edge:
+    // since 2025-07-03 inbound mail must pass SPF or DKIM (and the sender's
+    // DMARC policy is honoured) before this worker is ever invoked. We therefore
+    // do NOT re-derive a verdict from the `Authentication-Results` header — that
+    // header is not a reliable carrier of the edge verdict and a strict
+    // spf=pass+dkim=pass match rejected legitimately-authenticated mail. The
+    // author allow-list above, combined with edge SPF/DKIM/DMARC enforcement,
+    // is the spoofing boundary.
 
     // 3. Read raw MIME (also archived to R2)
     const raw = new Uint8Array(await streamToArrayBuffer(message.raw));

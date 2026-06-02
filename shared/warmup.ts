@@ -69,17 +69,6 @@ function parseStartDate(s: string): Date | null {
 const MS_PER_DAY = 24 * 3600 * 1000;
 const MS_PER_WEEK = 7 * MS_PER_DAY;
 
-/**
- * Returns the warmup week index (0-based) for `now`, or `null` if no warmup
- * is configured. Negative values mean `now` is before `startDate`.
- */
-export function weekIndex(cfg: WarmupConfig, now: Date): number | null {
-  if (!cfg.startDate) return null;
-  const start = parseStartDate(cfg.startDate);
-  if (!start) return null;
-  return Math.floor((now.getTime() - start.getTime()) / MS_PER_WEEK);
-}
-
 export function weeklyCapFor(cfg: WarmupConfig, week: number): number {
   if (week < 0) return 0;
   const sched = cfg.schedule ?? [];

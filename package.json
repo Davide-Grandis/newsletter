@@ -16,7 +16,6 @@
     "wrangler": "^4.85.0"
   },
   "dependencies": {
-    "mimetext": "^3.0.24",
     "postal-mime": "^2.2.7"
   }
 }

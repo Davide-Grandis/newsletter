@@ -5,6 +5,7 @@ import { getCampaign, getCampaignAttachments, recordSendSuccess, recordSendFailu
 import { instrumentHtml, unsubscribeUrl, signDownloadUrl } from '../../../shared/tracking';
 import type { QueueMessage } from '../../../shared/types';
 import { readWarmupConfig, currentWindow, delayUntilNextWindow } from '../../../shared/warmup';
+import { loadSettings } from '../../../shared/settings';
 
 export interface Env {
   DB: D1Database;
@@ -27,7 +28,12 @@ export interface Env {
 }
 
 export default {
-  async queue(batch: MessageBatch<QueueMessage>, env: Env, _ctx: ExecutionContext): Promise<void> {
+  async queue(batch: MessageBatch<QueueMessage>, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
+    // Resolve tunables (sending identity, size cap, warmup) against the D1
+    // `settings` table once per invocation; env vars / defaults are the
+    // fallback. Bindings and secrets on `rawEnv` are preserved.
+    const env = await loadSettings(rawEnv.DB, rawEnv);
+
     // Cache campaign + attachments per batch lifetime.
     const cache = new Map<string, { campaign: NonNullable<Awaited<ReturnType<typeof getCampaign>>>; parts: AttachmentPart[] }>();
 

@@ -18,20 +18,25 @@ export async function api<T = unknown>(
   if (res.status === 401) throw new ApiError('unauthorized', 401);
   if (!res.ok) {
     let msg = `${res.status} ${res.statusText}`;
+    let details: Record<string, string> | undefined;
     try {
-      const body = (await res.json()) as { error?: string };
+      const body = (await res.json()) as { error?: string; errors?: Record<string, string> };
       if (body?.error) msg = body.error;
+      if (body?.errors) details = body.errors;
     } catch {}
-    throw new ApiError(msg, res.status);
+    throw new ApiError(msg, res.status, details);
   }
   return (await res.json()) as T;
 }
 
 export class ApiError extends Error {
   status: number;
-  constructor(msg: string, status: number) {
+  // Optional per-field error map (e.g. validation failures keyed by field).
+  details?: Record<string, string>;
+  constructor(msg: string, status: number, details?: Record<string, string>) {
     super(msg);
     this.status = status;
+    this.details = details;
   }
 }
 
@@ -131,6 +136,17 @@ export interface Author {
 export interface Help {
   content: string;
   updated: string | null;
+}
+
+export interface Setting {
+  key: string;
+  // Effective value in use (db override -> worker env -> built-in default).
+  value: string;
+  // The stored override, or null when none is set (i.e. falling back).
+  stored: string | null;
+  // What the value reverts to when the override is cleared (env or default).
+  fallback: string;
+  source: 'db' | 'env' | 'default';
 }
 
 export type Quota =

@@ -1,4 +1,5 @@
 import PostalMime from 'postal-mime';
+import { loadSettings } from '../../../shared/settings';
 
 export interface Env {
   DB: D1Database;
@@ -8,7 +9,9 @@ export interface Env {
 }
 
 export default {
-  async email(message: ForwardableEmailMessage, env: Env, _ctx: ExecutionContext): Promise<void> {
+  async email(message: ForwardableEmailMessage, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
+    // Resolve tunables (bounce thresholds) against the D1 `settings` table.
+    const env = await loadSettings(rawEnv.DB, rawEnv);
     // VERP: bounce+<campaignId>.<subscriberId>@domain
     const to = (message.to ?? '').toLowerCase();
     const verp = /bounce\+([^.@]+)\.(\d+)@/.exec(to);

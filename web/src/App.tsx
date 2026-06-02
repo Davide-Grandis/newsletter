@@ -9,6 +9,7 @@ import NewsletterDetail from './pages/NewsletterDetail';
 import Campaigns from './pages/Campaigns';
 import CampaignDetail from './pages/CampaignDetail';
 import Bounces from './pages/Bounces';
+import Settings from './pages/Settings';
 import Help from './pages/Help';
 
 export default function App() {
@@ -21,6 +22,7 @@ export default function App() {
         <Route path="campaigns" element={<Campaigns />} />
         <Route path="campaigns/:id" element={<CampaignDetail />} />
         <Route path="bounces" element={<Bounces />} />
+        <Route path="settings" element={<Settings />} />
         <Route path="help" element={<Help />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
@@ -33,6 +35,7 @@ const NAV_ITEMS = [
   { to: '/newsletters', label: 'Newsletters', end: false },
   { to: '/campaigns', label: 'Campaigns', end: false },
   { to: '/bounces', label: 'Bounces', end: false },
+  { to: '/settings', label: 'Settings', end: false },
   { to: '/help', label: 'Help', end: false },
 ];
 

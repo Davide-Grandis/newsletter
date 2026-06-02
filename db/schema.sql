@@ -118,3 +118,13 @@ CREATE TABLE IF NOT EXISTS admins (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Global runtime configuration, editable from the admin console's Settings
+-- page. A row overrides the corresponding worker env var / built-in default;
+-- absent keys fall back to env then to the central defaults in
+-- `shared/settings.ts`. Only keys in that file's allow-list are honoured.
+CREATE TABLE IF NOT EXISTS settings (
+  key        TEXT PRIMARY KEY,
+  value      TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);

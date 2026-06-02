@@ -6,7 +6,7 @@ const STORAGE_KEY = 'nac-theme';
 
 // The OS-level colour-scheme preference. Used to seed a brand-new admin whose
 // preference has not been stored server-side yet.
-export function osPreference(): Theme {
+function osPreference(): Theme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 

@@ -12,6 +12,13 @@
 // secret — Access is the only gate.
 
 import { readWarmupConfig, currentWindow } from '../../../shared/warmup';
+import {
+  loadSettings,
+  readStoredSettings,
+  SETTING_KEYS,
+  SETTINGS_DEFAULTS,
+  isSettingKey,
+} from '../../../shared/settings';
 
 export interface Env {
   DB: D1Database;
@@ -35,6 +42,7 @@ export interface Env {
   CF_API_TOKEN?: string; // secret — token with "Email Routing Rules: Edit"
   EMAIL_ROUTING_ZONE_ID?: string; // zone id for the newsletter domain
   INGEST_WORKER_NAME?: string; // worker script the rule forwards to
+  BASE_DOMAIN?: string; // newsletter domain, e.g. for inbound-address hints
 }
 
 interface SubscriberPatch {
@@ -98,9 +106,53 @@ export default {
   },
 };
 
-async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
+// Settings that must be non-negative integers (stored as strings).
+const NUMERIC_SETTINGS = new Set<string>([
+  'MAX_ATTACHMENT_BYTES',
+  'MAX_TOTAL_ATTACHMENT_BYTES',
+  'MAX_ATTACHMENT_COUNT',
+  'ATTACHMENT_LINK_THRESHOLD_BYTES',
+  'BATCH_SIZE',
+  'MAX_RAW_BYTES',
+  'RETENTION_DAYS',
+  'HARD_BOUNCE_THRESHOLD',
+  'SOFT_BOUNCE_THRESHOLD',
+  'WARMUP_TARGET_WEEKLY',
+  'WARMUP_DAILY_CAP_EARLY',
+  'WARMUP_DAILY_CAP_LATE',
+  'WARMUP_LATE_START_WEEK',
+]);
+
+// Returns an error message if `val` is invalid for `key`, else null.
+function validateSetting(key: string, val: string): string | null {
+  if (NUMERIC_SETTINGS.has(key)) {
+    return /^\d+$/.test(val.trim()) ? null : 'must be a non-negative integer';
+  }
+  if (key === 'WARMUP_SCHEDULE') {
+    try {
+      const arr = JSON.parse(val);
+      if (!Array.isArray(arr) || !arr.every((n) => typeof n === 'number' && n >= 0)) {
+        return 'must be a JSON array of non-negative numbers';
+      }
+    } catch {
+      return 'must be valid JSON (e.g. [500, 1500, 5000])';
+    }
+    return null;
+  }
+  if (key === 'WARMUP_START_DATE') {
+    return val === '' || /^\d{4}-\d{2}-\d{2}$/.test(val) ? null : 'must be empty or YYYY-MM-DD';
+  }
+  return null; // free-form string keys
+}
+
+async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response> {
   const p = url.pathname;
   const m = req.method;
+
+  // Resolve configurable settings against the D1 `settings` table so routing,
+  // quota and any other reads use the operator-edited values. `rawEnv` keeps
+  // the original env vars (used to show per-key defaults on the Settings page).
+  const env = await loadSettings(rawEnv.DB, rawEnv);
 
   // -------- current user's UI preferences --------
 
@@ -122,6 +174,71 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
       .bind(email, theme)
       .run();
     return Response.json({ ok: true, theme });
+  }
+
+  // -------- global runtime settings --------
+
+  // Returns every configurable key with its effective value and provenance so
+  // the Settings page can show what is overridden vs. falling back to env/default.
+  if (p === '/api/settings' && m === 'GET') {
+    const stored = await readStoredSettings(rawEnv.DB);
+    const raw = rawEnv as unknown as Record<string, string | undefined>;
+    const items = SETTING_KEYS.map((key) => {
+      const dbVal = stored.get(key) ?? null;
+      const envVal = typeof raw[key] === 'string' && raw[key] !== '' ? (raw[key] as string) : null;
+      const def = SETTINGS_DEFAULTS[key];
+      return {
+        key,
+        value: dbVal ?? envVal ?? def,
+        stored: dbVal,
+        fallback: envVal ?? def,
+        source: dbVal != null ? 'db' : envVal != null ? 'env' : 'default',
+      };
+    });
+    return Response.json({ settings: items });
+  }
+
+  // Upserts (or, when a value is null, clears) settings. Clearing a key makes
+  // it fall back to the worker env var / built-in default again.
+  if (p === '/api/settings' && m === 'PUT') {
+    const body = await req.json<{ updates?: Record<string, string | null> }>();
+    const updates = body.updates ?? {};
+    const errors: Record<string, string> = {};
+    const toSet: Array<[string, string]> = [];
+    const toDelete: string[] = [];
+    for (const [key, val] of Object.entries(updates)) {
+      if (!isSettingKey(key)) {
+        errors[key] = 'unknown setting';
+        continue;
+      }
+      if (val === null) {
+        toDelete.push(key);
+        continue;
+      }
+      const err = validateSetting(key, val);
+      if (err) {
+        errors[key] = err;
+        continue;
+      }
+      toSet.push([key, val]);
+    }
+    if (Object.keys(errors).length > 0) {
+      return Response.json({ error: 'validation failed', errors }, { status: 400 });
+    }
+    const stmts: D1PreparedStatement[] = [];
+    for (const [key, val] of toSet) {
+      stmts.push(
+        rawEnv.DB.prepare(
+          "INSERT INTO settings (key, value) VALUES (?, ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        ).bind(key, val),
+      );
+    }
+    for (const key of toDelete) {
+      stmts.push(rawEnv.DB.prepare('DELETE FROM settings WHERE key = ?').bind(key));
+    }
+    if (stmts.length > 0) await rawEnv.DB.batch(stmts);
+    return Response.json({ ok: true, changed: toSet.length, cleared: toDelete.length });
   }
 
   // -------- newsletters --------
