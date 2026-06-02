@@ -1,4 +1,4 @@
-import { FormEvent, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, Page, Subscriber } from '../api';
 import { SortIcon } from './Newsletters';
@@ -49,12 +49,6 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
     qc.invalidateQueries({ queryKey: ['newsletter', newsletterId] });
   };
 
-  const add = useMutation({
-    mutationFn: (vars: { email: string; name?: string }) =>
-      api(base, { method: 'POST', body: JSON.stringify(vars) }),
-    onSuccess: refresh,
-  });
-
   const upload = useMutation({
     mutationFn: async (file: File) => {
       const text = await file.text();
@@ -68,16 +62,6 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
       refresh();
     },
   });
-
-  function onAdd(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const fd = new FormData(e.currentTarget);
-    const email = String(fd.get('email') ?? '').trim();
-    const name = String(fd.get('name') ?? '').trim() || undefined;
-    if (!email) return;
-    add.mutate({ email, name });
-    e.currentTarget.reset();
-  }
 
   const [exporting, setExporting] = useState(false);
   async function onExport() {
@@ -148,12 +132,6 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
           </div>
         </div>
       )}
-
-      <form onSubmit={onAdd} className="bg-white border border-slate-200 rounded p-3 flex gap-2 dark:bg-slate-900 dark:border-slate-800">
-        <input name="email" type="email" required placeholder="email@example.com" className={inputCls + ' flex-1'} />
-        <input name="name" placeholder="name (optional)" className={inputCls + ' flex-1'} />
-        <button className="bg-slate-900 text-white text-sm rounded px-3 py-1 dark:bg-slate-100 dark:text-slate-900">Add</button>
-      </form>
 
       <div className="flex gap-2">
         <select value={status} onChange={(e) => { setStatus(e.target.value); setPage(0); }} className={inputCls}>
