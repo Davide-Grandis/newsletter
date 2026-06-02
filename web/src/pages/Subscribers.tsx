@@ -178,7 +178,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
               <Th label="Status" title="Delivery state: active subscribers receive sends; unsubscribed, bounced and complained are excluded." sortKey="status" sort={sort} onSort={toggleSort} className="w-[9%]" />
               <Th label="Verified" title="Whether the email address has been confirmed. Defaults to False for new subscribers." sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" title="Number of times mail to this address has bounced." sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
-              <Th label="Date subscribed" title="When the subscriber was added to the list." sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[24%]" />
+              <Th label="Date subscribed" title="When the subscriber was added to the list." sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[24%] pl-8" />
             </tr>
           </thead>
           <tbody>
@@ -201,7 +201,7 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
                   </span>
                 </td>
                 <td className="p-2 text-right">{s.bounce_count}</td>
-                <td className="p-2 truncate">{s.subscribed_at}</td>
+                <td className="p-2 pl-8 truncate">{s.subscribed_at}</td>
               </tr>
             ))}
             {list.data && rows.length === 0 && (
