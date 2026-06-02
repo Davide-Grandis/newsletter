@@ -104,7 +104,7 @@ export default function Newsletters() {
         <h1 className="text-xl font-semibold">
           Newsletters
           {list.data && (
-            <span className="ml-2 text-sm font-normal text-slate-500 dark:text-slate-400">
+            <span className="ml-2 text-xl font-normal text-slate-500 dark:text-slate-400">
               (total {list.data.items.length}, enabled {list.data.items.filter((n) => n.enabled === 1).length})
             </span>
           )}
