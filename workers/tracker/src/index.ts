@@ -36,13 +36,17 @@ export default {
     if (req.method === 'GET' && parts[0] === 'c' && parts.length === 3) {
       const campaignId = parts[1]!;
       const sub = Number(parts[2]!);
-      const target = url.searchParams.get('u');
+      // The signature is computed over the *encoded* `u` value (see
+      // signClickUrl), so verify against the raw query param rather than the
+      // value decoded by URLSearchParams, then decode exactly once for use.
+      const rawU = rawParam(url.search, 'u');
       const sig = url.searchParams.get('sig');
-      if (!target || !sig) return new Response('bad request', { status: 400 });
-      const ok = await verifyHmac(env.LINK_SIGNING_KEY, `c|${campaignId}|${sub}|${target}`, sig);
+      if (!rawU || !sig) return new Response('bad request', { status: 400 });
+      const ok = await verifyHmac(env.LINK_SIGNING_KEY, `c|${campaignId}|${sub}|${rawU}`, sig);
       if (!ok) return new Response('forbidden', { status: 403 });
-      ctx.waitUntil(logEvent(env, 'click', campaignId, sub, req, decodeURIComponent(target)));
-      return Response.redirect(decodeURIComponent(target), 302);
+      const target = decodeURIComponent(rawU);
+      ctx.waitUntil(logEvent(env, 'click', campaignId, sub, req, target));
+      return Response.redirect(target, 302);
     }
 
     // GET /a/:campaign/:sub/:attId?sig=...
@@ -98,6 +102,17 @@ export default {
     return new Response('not found', { status: 404 });
   },
 };
+
+// Returns the raw (still URL-encoded) value of a query parameter, exactly as it
+// appears in the query string. Unlike URLSearchParams.get(), this does not
+// percent-decode, which is required to reproduce the signed payload.
+function rawParam(search: string, name: string): string {
+  const q = search.startsWith('?') ? search.slice(1) : search;
+  for (const pair of q.split('&')) {
+    if (pair.startsWith(name + '=')) return pair.slice(name.length + 1);
+  }
+  return '';
+}
 
 async function checkUnsubToken(env: Env, sub: number, token: string): Promise<boolean> {
   const row = await env.DB
