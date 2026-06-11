@@ -14,6 +14,7 @@ export interface Env {
   QUEUE: Queue<QueueMessage>;
   FROM_ADDRESS: string;
   TRACKING_BASE_URL: string;
+  TRACKING_ENABLED: string;
   BOUNCE_DOMAIN: string;
   MAX_RAW_BYTES: string;
   LINK_SIGNING_KEY: string;
@@ -264,6 +265,10 @@ async function renderRecipientHtml(
       html += `<hr><p><strong>Attachments:</strong></p><ul>${links.join('')}</ul>`;
     }
   }
+  // Open/click tracking is optional. When disabled, links are left pointing at
+  // their original destinations and no open pixel is added. Link-mode download
+  // links above are unaffected — they deliver the attachments themselves.
+  if (env.TRACKING_ENABLED === 'false') return html;
   return await instrumentHtml(html, env.TRACKING_BASE_URL, env.LINK_SIGNING_KEY, campaign.id, subscriberId);
 }
 

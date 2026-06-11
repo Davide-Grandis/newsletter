@@ -123,10 +123,16 @@ const NUMERIC_SETTINGS = new Set<string>([
   'WARMUP_LATE_START_WEEK',
 ]);
 
+// Settings that must be the string 'true' or 'false'.
+const BOOLEAN_SETTINGS = new Set<string>(['TRACKING_ENABLED']);
+
 // Returns an error message if `val` is invalid for `key`, else null.
 function validateSetting(key: string, val: string): string | null {
   if (NUMERIC_SETTINGS.has(key)) {
     return /^\d+$/.test(val.trim()) ? null : 'must be a non-negative integer';
+  }
+  if (BOOLEAN_SETTINGS.has(key)) {
+    return val === 'true' || val === 'false' ? null : "must be 'true' or 'false'";
   }
   if (key === 'WARMUP_SCHEDULE') {
     try {

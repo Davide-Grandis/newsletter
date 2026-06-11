@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, ApiError, Setting } from '../api';
 
-type FieldType = 'text' | 'number' | 'textarea';
+type FieldType = 'text' | 'number' | 'textarea' | 'boolean';
 
 interface FieldMeta {
   key: string;
@@ -40,6 +40,14 @@ const SECTIONS: Section[] = [
     ],
   },
   {
+    title: 'Tracking',
+    description:
+      'Open and click tracking transforms outgoing HTML: every link is rewritten to a signed redirect through the tracker worker, and an invisible 1\u00d71 pixel is appended to detect opens. Disable to send links unmodified and omit the pixel \u2014 opens and clicks will then not be recorded. Large-attachment download links are unaffected, since they deliver the files themselves.',
+    fields: [
+      { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added. When off, recipients get your original links and no pixel; the Analytics page will show no opens/clicks for new sends.', type: 'boolean' },
+    ],
+  },
+  {
     title: 'Attachments',
     description: 'Limits enforced by the ingest worker when a campaign email arrives.',
     fields: [
@@ -61,9 +69,10 @@ const SECTIONS: Section[] = [
   },
   {
     title: 'Retention',
-    description: 'Daily cleanup cron removes data older than this.',
+    description:
+      'A daily cron permanently deletes campaigns older than this, together with their stored attachments and archived raw email (from R2) and their send/engagement history (from the database). After deletion the data is gone: attachment download links return \u201cnot found\u201d, the campaign disappears from Analytics, and open/click redirects no longer record anything (the click redirect itself still forwards to the destination).',
     fields: [
-      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before deletion.', type: 'number' },
+      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before permanent deletion. Lower values free storage sooner but make older attachment links and analytics unavailable.', type: 'number' },
     ],
   },
   {
@@ -219,7 +228,13 @@ export default function Settings() {
                   </div>
 
                   <div className="min-w-0">
-                    {f.type === 'textarea' ? (
+                    {f.type === 'boolean' ? (
+                      <Toggle
+                        checked={shownValue === 'true'}
+                        disabled={save.isPending || editKey !== null}
+                        onChange={(next) => save.mutate({ [f.key]: next ? 'true' : 'false' })}
+                      />
+                    ) : f.type === 'textarea' ? (
                       <textarea
                         id={f.key}
                         rows={2}
@@ -240,10 +255,10 @@ export default function Settings() {
                     )}
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                       {bytes && <span>{bytes}</span>}
-                      {s && s.source === 'db' && (
+                      {s && s.source === 'db' && f.type !== 'boolean' && (
                         <span>overrides default “{s.fallback || '∅'}”</span>
                       )}
-                      {editing && fieldError && (
+                      {(editing || f.type === 'boolean') && fieldError && (
                         <span className="text-red-600">{fieldError}</span>
                       )}
                       {savedKey === f.key && (
@@ -253,7 +268,19 @@ export default function Settings() {
                   </div>
 
                   <div className="flex items-center gap-2 justify-start sm:justify-end">
-                    {editing ? (
+                    {f.type === 'boolean' ? (
+                      s && s.source === 'db' && (
+                        <button
+                          type="button"
+                          onClick={() => resetField(f.key)}
+                          disabled={editKey !== null || save.isPending}
+                          title="Clear the override and revert to the default value"
+                          className="text-xs rounded px-3 py-1.5 text-slate-500 hover:text-red-600 disabled:opacity-40 dark:text-slate-400"
+                        >
+                          Reset
+                        </button>
+                      )
+                    ) : editing ? (
                       <>
                         <button
                           type="button"
@@ -303,6 +330,35 @@ export default function Settings() {
         </section>
       ))}
     </div>
+  );
+}
+
+function Toggle({
+  checked,
+  disabled,
+  onChange,
+}: {
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
+        checked ? 'bg-emerald-500' : 'bg-slate-300 dark:bg-slate-600'
+      }`}
+    >
+      <span
+        className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform ${
+          checked ? 'translate-x-4' : 'translate-x-0.5'
+        }`}
+      />
+    </button>
   );
 }
 

@@ -76,6 +76,49 @@ subscribers receive a campaign.
 The separate **verified** flag indicates whether the address has been confirmed;
 it is independent of status and defaults to False for newly added subscribers.
 
+## Email tracking & content transformation
+
+Before each copy is sent, the consumer worker **transforms the HTML body** of the
+campaign so engagement can be measured and large files delivered. The original
+issue the author sent is archived untouched; only the per-recipient outgoing copy
+is rewritten. The transformations are:
+
+- **Link rewriting (click tracking).** Every `http(s)` link in the HTML
+  (`<a href="…">`) is replaced with a *signed* redirect through the tracker
+  worker: `https://<tracking-base>/c/<campaign>/<subscriber>?u=<destination>&sig=…`.
+  When the recipient clicks, the tracker verifies the signature, records a
+  **click** event, then `302`-redirects to the original destination. The
+  plain-text alternative and non-`http(s)` links (e.g. `mailto:`) are left
+  unchanged.
+- **Open pixel (open tracking).** A transparent 1×1 GIF is appended to the HTML:
+  `<img src="https://<tracking-base>/o/<campaign>/<subscriber>.gif">`. When the
+  mail client loads remote images, that request records an **open**. This is an
+  approximate signal — clients that block images undercount, and privacy proxies
+  (e.g. Apple Mail Privacy Protection) can prefetch it and overcount.
+- **Large attachments (link mode).** When a campaign's combined attachment size
+  exceeds the *Link-mode threshold*, the files are **not** attached to the email.
+  Instead an **Attachments** list of signed download links is appended
+  (`…/a/<campaign>/<subscriber>/<attachmentId>?sig=…`); the tracker verifies the
+  signature, streams the file from R2, and records a **download**. Smaller
+  attachments (and inline images) are embedded in the message as normal.
+- **Unsubscribe.** A `List-Unsubscribe` header (with one-click `POST` support)
+  pointing at `…/u/<subscriber>?t=<token>` is added so mail clients can offer a
+  native unsubscribe button.
+
+### Turning tracking off
+
+The **Settings → Tracking** toggle (`TRACKING_ENABLED`) controls only the first
+two transformations. When **off**:
+
+- Links are sent **unmodified** (recipients see and click your real URLs), and
+- the open pixel is **omitted**.
+
+As a result, **opens and clicks are no longer recorded** and the Analytics page
+shows none for sends made while tracking is off. Large-attachment **download
+links are unaffected** — they are a delivery mechanism, not tracking, so they
+remain (and a download may still be logged). The toggle takes effect on the next
+campaign sent.
+
 ## Appearance (theme)
 
 Use the sun/moon button in the header to switch between **light** and **dark**
@@ -118,6 +161,33 @@ The system uses two R2 buckets:
   hash) and archived bounce messages. Bound to the ingest, consumer, bounce and
   cleanup workers as `ARCHIVE`; the cleanup worker purges it on the retention
   schedule.
+
+## Data retention & cleanup
+
+A daily cleanup cron enforces the **Retention (days)** setting
+(`RETENTION_DAYS`). Once a campaign is older than the retention window it is
+**permanently deleted**, and the deletion is comprehensive:
+
+- The campaign row is removed; `ON DELETE CASCADE` also removes its
+  **attachments**, **sends** and **engagement events** from the database.
+- The stored files in R2 are deleted: every attachment blob **and** the archived
+  raw inbound email (`campaigns/<id>/raw.eml`).
+
+**Is the content still available afterwards? No.** After cleanup runs:
+
+- **Attachment download links return “not found” (404)** — both the database row
+  and the R2 object are gone, so previously sent link-mode download links stop
+  working.
+- The campaign **no longer appears** in the Campaigns or Analytics pages, and its
+  history (opens, clicks, downloads, per-recipient sends) is gone.
+- **Click links still redirect** to their original destination — the signed
+  redirect is stateless and doesn't depend on stored data — but the click is
+  **no longer recorded**. The open pixel likewise still returns an image but is
+  no longer tied to a live campaign.
+
+Subscribers, authors and newsletters are **not** affected by retention; only
+campaign-scoped data is purged. Set a longer retention window if you need
+attachment links or analytics to remain available for longer.
 
 ## Initial setup
 

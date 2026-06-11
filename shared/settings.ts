@@ -18,6 +18,8 @@ export const SETTING_KEYS = [
   'FROM_ADDRESS',
   'BOUNCE_DOMAIN',
   'TRACKING_BASE_URL',
+  // -- Tracking --
+  'TRACKING_ENABLED',
   // -- Attachments --
   'MAX_ATTACHMENT_BYTES',
   'MAX_TOTAL_ATTACHMENT_BYTES',
@@ -61,6 +63,7 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   FROM_ADDRESS: 'Newsletter <newsletter@eneanewsletter.it>',
   BOUNCE_DOMAIN: 'eneanewsletter.it',
   TRACKING_BASE_URL: 'https://track.eneanewsletter.it',
+  TRACKING_ENABLED: 'true',
   MAX_ATTACHMENT_BYTES: '10485760',
   MAX_TOTAL_ATTACHMENT_BYTES: '20971520',
   MAX_ATTACHMENT_COUNT: '10',
