@@ -119,17 +119,6 @@ links are unaffected** — they are a delivery mechanism, not tracking, so they
 remain (and a download may still be logged). The toggle takes effect on the next
 campaign sent.
 
-## Appearance (theme)
-
-Use the sun/moon button in the header to switch between **light** and **dark**
-themes. Your choice is **saved to your account**, so it follows you to any
-browser or device the next time you sign in — the server-stored preference is
-the source of truth.
-
-The first time you sign in (before any preference is stored) the console adopts
-your operating system's colour-scheme setting and saves that as your starting
-preference. Changing the theme afterwards updates the stored value immediately.
-
 ## Database schema
 
 A single Cloudflare D1 database (`newsletter_db`) backs everything. Core tables:

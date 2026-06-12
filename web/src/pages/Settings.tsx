@@ -17,9 +17,20 @@ interface Section {
   fields: FieldMeta[];
 }
 
+interface Tab {
+  id: string;
+  label: string;
+  sections: Section[];
+}
+
 // Client-side presentation metadata. The server's allow-list (shared/settings.ts)
 // remains the source of truth for which keys are valid and how they're validated.
-const SECTIONS: Section[] = [
+// Sections are grouped into a small number of tabs to keep the page scannable.
+const TABS: Tab[] = [
+  {
+    id: 'sending',
+    label: 'Sending',
+    sections: [
   {
     title: 'Deployment & routing',
     description:
@@ -34,19 +45,16 @@ const SECTIONS: Section[] = [
     title: 'Sending identity',
     description: 'How outbound mail is addressed and where engagement is tracked.',
     fields: [
-      { key: 'FROM_ADDRESS', label: 'Default from address', help: 'Default From header for outbound mail, e.g. "Newsletter <newsletter@example.com>". Used when a newsletter does not specify its own sender.' },
       { key: 'BOUNCE_DOMAIN', label: 'Bounce domain', help: 'Domain used for VERP bounce return-path addresses (bounce+<id>@domain).' },
       { key: 'TRACKING_BASE_URL', label: 'Tracking base URL', help: 'Base URL of the tracker worker for opens, clicks, unsubscribe and downloads.' },
     ],
   },
-  {
-    title: 'Tracking',
-    description:
-      'Open and click tracking transforms outgoing HTML: every link is rewritten to a signed redirect through the tracker worker, and an invisible 1\u00d71 pixel is appended to detect opens. Disable to send links unmodified and omit the pixel \u2014 opens and clicks will then not be recorded. Large-attachment download links are unaffected, since they deliver the files themselves.',
-    fields: [
-      { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added. When off, recipients get your original links and no pixel; the Analytics page will show no opens/clicks for new sends.', type: 'boolean' },
     ],
   },
+  {
+    id: 'attachments',
+    label: 'Attachments',
+    sections: [
   {
     title: 'Attachments',
     description: 'Limits enforced by the ingest worker when a campaign email arrives.',
@@ -67,14 +75,26 @@ const SECTIONS: Section[] = [
       { key: 'MAX_RAW_BYTES', label: 'Max raw message (bytes)', help: 'Hard cap on a fully built MIME message before sending.', type: 'number' },
     ],
   },
-  {
-    title: 'Retention',
-    description:
-      'A daily cron permanently deletes campaigns older than this, together with their stored attachments and archived raw email (from R2) and their send/engagement history (from the database). After deletion the data is gone: attachment download links return \u201cnot found\u201d, the campaign disappears from Analytics, and open/click redirects no longer record anything (the click redirect itself still forwards to the destination).',
-    fields: [
-      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before permanent deletion. Lower values free storage sooner but make older attachment links and analytics unavailable.', type: 'number' },
     ],
   },
+  {
+    id: 'tracking',
+    label: 'Tracking',
+    sections: [
+  {
+    title: 'Tracking',
+    description:
+      'Open and click tracking transforms outgoing HTML: every link is rewritten to a signed redirect through the tracker worker, and an invisible 1×1 pixel is appended to detect opens. Disable to send links unmodified and omit the pixel — opens and clicks will then not be recorded. Large-attachment download links are unaffected, since they deliver the files themselves.',
+    fields: [
+      { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added. When off, recipients get your original links and no pixel; the Analytics page will show no opens/clicks for new sends.', type: 'boolean' },
+    ],
+  },
+    ],
+  },
+  {
+    id: 'delivery',
+    label: 'Delivery',
+    sections: [
   {
     title: 'Bounce handling',
     description: 'When the bounce worker marks a subscriber as bounced.',
@@ -93,6 +113,22 @@ const SECTIONS: Section[] = [
       { key: 'WARMUP_DAILY_CAP_EARLY', label: 'Daily cap (early weeks)', help: 'Daily cap before the late-start week.', type: 'number' },
       { key: 'WARMUP_DAILY_CAP_LATE', label: 'Daily cap (late weeks)', help: 'Daily cap from the late-start week onward.', type: 'number' },
       { key: 'WARMUP_LATE_START_WEEK', label: 'Late-start week', help: 'Week index at which the late daily cap begins to apply.', type: 'number' },
+    ],
+  },
+    ],
+  },
+  {
+    id: 'retention',
+    label: 'Retention',
+    sections: [
+  {
+    title: 'Retention',
+    description:
+      'A daily cron permanently deletes campaigns older than this, together with their stored attachments and archived raw email (from R2) and their send/engagement history (from the database). After deletion the data is gone: attachment download links return \u201cnot found\u201d, the campaign disappears from Analytics, and open/click redirects no longer record anything (the click redirect itself still forwards to the destination).',
+    fields: [
+      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before permanent deletion. Lower values free storage sooner but make older attachment links and analytics unavailable.', type: 'number' },
+    ],
+  },
     ],
   },
 ];
@@ -116,6 +152,9 @@ export default function Settings() {
   const [draft, setDraft] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [savedKey, setSavedKey] = useState<string | null>(null);
+  const [tab, setTab] = useState<string>(TABS[0]!.id);
+
+  const activeTab = TABS.find((t) => t.id === tab) ?? TABS[0]!;
 
   const query = useQuery({
     queryKey: ['settings'],
@@ -191,7 +230,22 @@ export default function Settings() {
         </p>
       </div>
 
-      {SECTIONS.map((section) => (
+      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
+        {TABS.map((t) => (
+          <TabButton
+            key={t.id}
+            active={t.id === activeTab.id}
+            onClick={() => {
+              cancelEdit();
+              setTab(t.id);
+            }}
+          >
+            {t.label}
+          </TabButton>
+        ))}
+      </div>
+
+      {activeTab.sections.map((section) => (
         <section
           key={section.title}
           className="border border-slate-200 rounded-lg dark:border-slate-700 overflow-hidden"
@@ -330,6 +384,30 @@ export default function Settings() {
         </section>
       ))}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-2 text-sm -mb-px border-b-2 ${
+        active
+          ? 'border-slate-900 text-slate-900 font-medium dark:border-slate-100 dark:text-slate-100'
+          : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 

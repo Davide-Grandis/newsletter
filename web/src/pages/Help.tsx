@@ -1,7 +1,36 @@
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api, ApiError, Help as HelpDoc } from '../api';
+
+interface HelpSection {
+  title: string;
+  body: string;
+}
+
+// Split a markdown document into the leading preamble (everything before the
+// first level-2 heading) and one section per level-2 (`## `) heading. The page
+// renders each section as its own tab to keep the long help doc readable.
+function splitSections(md: string): { preamble: string; sections: HelpSection[] } {
+  const lines = md.split('\n');
+  const preamble: string[] = [];
+  const sections: HelpSection[] = [];
+  let current: HelpSection | null = null;
+  for (const line of lines) {
+    const m = /^##\s+(.*)$/.exec(line);
+    if (m) {
+      current = { title: m[1]!.trim(), body: '' };
+      sections.push(current);
+    } else if (current) {
+      current.body += (current.body ? '\n' : '') + line;
+    } else {
+      // Drop the document's own H1 — the page already shows a “Help” header.
+      if (!/^#\s+/.test(line)) preamble.push(line);
+    }
+  }
+  return { preamble: preamble.join('\n').trim(), sections };
+}
 
 export default function Help() {
   const { data, isLoading, error } = useQuery({
@@ -9,6 +38,13 @@ export default function Help() {
     queryFn: () => api<HelpDoc>('/api/help'),
     retry: false,
   });
+
+  const { preamble, sections } = useMemo(
+    () => splitSections(data?.content ?? ''),
+    [data?.content],
+  );
+  const [tab, setTab] = useState(0);
+  const active = sections[tab] ?? sections[0];
 
   if (isLoading) {
     return <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>;
@@ -44,12 +80,61 @@ export default function Help() {
           </span>
         )}
       </div>
-      <article className="prose-sm max-w-none">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-          {data?.content ?? ''}
-        </ReactMarkdown>
-      </article>
+      {preamble && (
+        <article className="prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {preamble}
+          </ReactMarkdown>
+        </article>
+      )}
+
+      {sections.length > 0 ? (
+        <div className="pt-6">
+          <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800 mb-4">
+            {sections.map((s, i) => (
+              <TabButton key={s.title} active={i === tab} onClick={() => setTab(i)}>
+                {s.title}
+              </TabButton>
+            ))}
+          </div>
+          <article className="prose-sm max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {active ? `## ${active.title}\n${active.body}` : ''}
+            </ReactMarkdown>
+          </article>
+        </div>
+      ) : (
+        <article className="prose-sm max-w-none">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            {data?.content ?? ''}
+          </ReactMarkdown>
+        </article>
+      )}
     </div>
+  );
+}
+
+function TabButton({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`px-3 py-2 text-sm -mb-px border-b-2 ${
+        active
+          ? 'border-orange-500 text-orange-600 font-medium dark:border-orange-400 dark:text-orange-400'
+          : 'border-transparent text-orange-500 hover:text-orange-600 dark:text-orange-400/80 dark:hover:text-orange-300'
+      }`}
+    >
+      {children}
+    </button>
   );
 }
 
