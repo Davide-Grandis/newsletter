@@ -1,5 +1,5 @@
 ---
-description: Deploy the newsletter pipeline (workers + SPA) to the Cloudflare zone eneanewsletter.it
+description: Deploy the newsletter pipeline (workers + SPA) to the Cloudflare zone
 ---
 
 Full runbook is in `docs/deploy.md`. This workflow drives the steps that can
@@ -86,9 +86,9 @@ Generate values with `openssl rand -base64 48`.
 
 This step is manual. Direct the user to:
 
-- Dashboard → eneanewsletter.it → Email → enable Email Routing
+- Dashboard → your zone → Email → enable Email Routing
 - Same panel → Email Sending → enable, add the DKIM TXT record
-- Do NOT add a manual DNS record for `track.eneanewsletter.it` — the tracker's `custom_domain = true` route creates one on first deploy. Adding one manually causes "Hostname already has externally managed DNS records".
+- Do NOT add a manual DNS record for the tracker hostname — the tracker's `custom_domain = true` route creates one on first deploy. Adding one manually causes "Hostname already has externally managed DNS records".
 - (Defer the Email Routing rules to step 9, after workers exist.)
 
 ## 8. Build SPA and deploy all workers
@@ -104,7 +104,7 @@ Capture the printed admin and tracker `*.workers.dev` URLs.
 
 Manual. In the dashboard:
 
-- `newsletter@eneanewsletter.it` → Send to Worker `newsletter-ingest`
+- `newsletter@yourdomain.com` → Send to Worker `newsletter-ingest`
 - catch-all → Send to Worker `newsletter-bounce` (the worker filters
   `bounce+*` itself)
 
@@ -113,7 +113,7 @@ Manual. In the dashboard:
 Edit `workers/tracker/wrangler.toml` to uncomment:
 
 ```toml
-routes = [{ pattern = "track.eneanewsletter.it/*", custom_domain = true }]
+routes = [{ pattern = "track.yourdomain.com/*", custom_domain = true }]
 ```
 
 Then redeploy:
@@ -129,7 +129,7 @@ Manual. Zero Trust dashboard:
 1. Access → Applications → Add → Self-hosted.
 2. Application domain = the admin worker's `*.workers.dev` URL.
 3. Identity provider: Google (or whatever the user prefers).
-4. Policy: Allow `Emails: davideg@cloudflare.com` (or a Google group).
+4. Policy: Allow `Emails: your@email.com` (or a Google group).
 
 Without this, every `/api/*` call returns 401 — the admin worker has no
 fallback authentication.
@@ -138,7 +138,7 @@ fallback authentication.
 
 Open the admin worker URL in a browser (Access prompts for SSO), then:
 
-1. **Authors** page → add `davideg@cloudflare.com`. Inbound emails are
+1. **Authors** page → add `your@email.com`. Inbound emails are
    rejected until at least one row exists in this table.
 2. **Subscribers** page → add at least one test recipient.
 
@@ -148,5 +148,5 @@ Open the admin worker URL in a browser (Access prompts for SSO), then:
 npx wrangler tail newsletter-ingest
 ```
 
-In another terminal, send a test mail to `newsletter@eneanewsletter.it`
-from `davideg@cloudflare.com` and confirm the chain runs end-to-end.
+In another terminal, send a test mail to `newsletter@yourdomain.com`
+from `your@email.com` and confirm the chain runs end-to-end.

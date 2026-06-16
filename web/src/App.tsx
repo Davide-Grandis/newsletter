@@ -127,7 +127,7 @@ function Layout() {
           <span className="flex items-center gap-2 font-semibold text-[#0060BE]">
             <img
               src="/media/logoenea1.png"
-              alt="ENEA"
+              alt="Logo"
               className="h-8 w-auto"
               onError={(e) => {
                 (e.currentTarget as HTMLImageElement).style.display = 'none';
@@ -211,7 +211,7 @@ function Footer() {
         <span className="flex items-center gap-1">
           Built with
           <HeartIcon />
-          on Cloudflare by Davide Grandis (davideg@cloudflare.com)
+          on Cloudflare Workers
         </span>
       </div>
     </footer>
@@ -223,7 +223,7 @@ function NoAccess({ email }: { email: string | null }) {
     <div className="h-screen flex flex-col items-center justify-center gap-4 p-6 text-center bg-slate-50 dark:bg-slate-950">
       <img
         src="/media/logoenea1.png"
-        alt="ENEA"
+        alt="Logo"
         className="h-10 w-auto"
         onError={(e) => {
           (e.currentTarget as HTMLImageElement).style.display = 'none';

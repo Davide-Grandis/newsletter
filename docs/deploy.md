@@ -3,13 +3,9 @@
 End-to-end deployment of the newsletter pipeline to a fresh Cloudflare zone.
 All commands assume `cwd = repo root` unless noted.
 
-Targets:
-
-- **Zone**: `eneanewsletter.it`
-- **Inbound newsletter address**: `newsletter@eneanewsletter.it`
-- **VERP bounce pattern**: `bounce+*@eneanewsletter.it`
-- **Tracker hostname**: `track.eneanewsletter.it`
-- **Initial authorized author**: `davideg@cloudflare.com` (further authors are added through the admin GUI's *Authors* page or `POST /api/authors` — there is no `ALLOWED_AUTHORS` env var anymore)
+Replace `yourdomain.com` throughout this runbook with your actual Cloudflare zone
+domain, and `your@email.com` with the author email address you'll use for the
+first test send.
 
 ## 0. Prerequisites
 
@@ -23,7 +19,7 @@ node --version
 npx wrangler --version
 
 # Authenticate to the target Cloudflare account.
-# This opens a browser; pick the account that owns eneanewsletter.it.
+# This opens a browser; pick the account that owns your zone.
 npx wrangler login
 
 # Confirm.
@@ -103,7 +99,7 @@ These steps are dashboard-only; wrangler can't drive them.
 
 ### 3.1 Email Routing (inbound)
 
-1. Cloudflare dashboard → `eneanewsletter.it` → **Email** → **Email
+1. Cloudflare dashboard → your zone → **Email** → **Email
    Routing** → enable.
 2. Cloudflare will add MX + SPF records automatically.
 3. Routes will be added in step 6 once the workers exist.
@@ -120,7 +116,7 @@ These steps are dashboard-only; wrangler can't drive them.
 
 **Skip this — the tracker's `custom_domain = true` route creates the DNS
 record automatically when step 7 deploys.** Manually adding an A or CNAME
-for `track.eneanewsletter.it` will cause `wrangler deploy` to fail with
+for `track.yourdomain.com` will cause `wrangler deploy` to fail with
 "Hostname already has externally managed DNS records".
 
 ## 4. Set worker secrets
@@ -179,8 +175,8 @@ Dashboard → Email Routing → **Routes**.
 
 | Match                                | Action                              |
 | ------------------------------------ | ----------------------------------- |
-| `newsletter@eneanewsletter.it`       | Send to Worker → `newsletter-ingest`|
-| `bounce+*@eneanewsletter.it` (custom)| Send to Worker → `newsletter-bounce`|
+| `newsletter@yourdomain.com`       | Send to Worker → `newsletter-ingest`|
+| `bounce+*@yourdomain.com` (custom)| Send to Worker → `newsletter-bounce`|
 
 The `bounce+*` pattern needs a **catch-all** rule with action "send to
 worker", because Email Routing's UI doesn't accept `+*` literally; the
@@ -192,7 +188,7 @@ After step 5 prints the tracker's `*.workers.dev` URL, edit
 `workers/tracker/wrangler.toml`:
 
 ```toml
-routes = [{ pattern = "track.eneanewsletter.it/*", custom_domain = true }]
+routes = [{ pattern = "track.yourdomain.com/*", custom_domain = true }]
 ```
 
 Then redeploy:
@@ -211,7 +207,7 @@ the API will return `401` on every `/api/*` call.
 1. Zero Trust → **Access** → **Applications** → Add → Self-hosted.
 2. Application domain: the admin worker's URL.
 3. Identity providers: pick one (Google, OTP, …).
-4. Policy: `Allow` for `Emails: davideg@cloudflare.com` (or a group).
+4. Policy: `Allow` for `Emails: your@email.com` (or a group).
 
 Once saved, the GUI header auto-populates the user's name and the Logout
 button hits `/cdn-cgi/access/logout`.
@@ -228,7 +224,7 @@ https://newsletter-admin.<your-subdomain>.workers.dev/
 
 Then, using the GUI:
 
-1. **Authors** page → add `davideg@cloudflare.com` (or whichever address
+1. **Authors** page → add `your@email.com` (or whichever address
    you'll send the test from). The ingest worker rejects every inbound
    email until at least one row exists here.
 2. **Subscribers** page → add at least one subscriber so the test
@@ -238,7 +234,7 @@ Then, using the GUI:
 
 ```bash
 # Send a test newsletter to ingest, FROM the authorized author address.
-echo "Hello world" | mail -s "Test campaign" newsletter@eneanewsletter.it
+echo "Hello world" | mail -s "Test campaign" newsletter@yourdomain.com
 
 # Watch logs.
 npx wrangler tail newsletter-ingest

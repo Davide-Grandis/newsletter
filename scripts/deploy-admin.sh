@@ -3,8 +3,8 @@
 # Deploy the admin worker (Newsletter Admin Console).
 #
 # Builds the React SPA into workers/admin/public, then deploys the admin
-# worker to the ENEA PoC account. The worker is served on its custom
-# hostname (console.eneanewsletter.it) and gated by Cloudflare Access.
+# worker. The worker is served on its custom hostname (configured in
+# workers/admin/wrangler.toml) and gated by Cloudflare Access.
 #
 # After a successful deploy it commits any pending changes and pushes to
 # GitHub (origin). Pass a commit message as the first argument; otherwise a
@@ -21,8 +21,9 @@
 
 set -euo pipefail
 
-# ENEA PoC account — set so wrangler does not prompt for account selection.
-export CLOUDFLARE_ACCOUNT_ID="${CLOUDFLARE_ACCOUNT_ID:-e1da20c7e9f2e83d2f97f9f73cfbb9dc}"
+# Set CLOUDFLARE_ACCOUNT_ID in your environment before running if you have
+# multiple Cloudflare accounts and wrangler would otherwise prompt for one.
+# Example: export CLOUDFLARE_ACCOUNT_ID="your-account-id"
 
 # Resolve repo root from this script's location so it works from any cwd.
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,7 +32,7 @@ cd "$ROOT"
 echo "==> Building SPA"
 npm run build:web
 
-echo "==> Deploying admin worker (account: $CLOUDFLARE_ACCOUNT_ID)"
+echo "==> Deploying admin worker"
 (cd workers/admin && npx wrangler deploy)
 
 echo "==> Pushing to GitHub"
@@ -44,4 +45,4 @@ else
 fi
 git push origin HEAD
 
-echo "==> Done. Console: https://console.eneanewsletter.it/"
+echo "==> Done."

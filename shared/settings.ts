@@ -93,8 +93,8 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   ACCESS_ACCOUNT_ID: '',
   ACCESS_LIST_ID: '',
   ALLOW_ADMIN_NEWSLETTER_CRUD: 'false',
-  FROM_ADDRESS: 'Newsletter <newsletter@eneanewsletter.it>',
-  TRACKING_BASE_URL: 'https://track.eneanewsletter.it',
+  FROM_ADDRESS: 'Newsletter <newsletter@yourdomain.com>',
+  TRACKING_BASE_URL: 'https://track.yourdomain.com',
   // Global default footer. Newsletters with an empty footer inherit these.
   // {{unsubscribe_url}} is always honoured; if a footer omits it the consumer
   // appends an unsubscribe line anyway. {{newsletter_name}}/{{email}} are

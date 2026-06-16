@@ -22,7 +22,7 @@ what each worker does, and how to configure or disable tracking.
 | **Consumer worker** | `workers/consumer` — builds and sends per-recipient emails; applies `instrumentHtml()` to each HTML body when tracking is enabled. |
 | **Tracker worker** | `workers/tracker` — handles all tracking requests: open pixels, click redirects, attachment downloads, unsubscribe, and public signup. Lives at `track.<domain>`. |
 | **`events` table** | D1 table recording every open, click, download, unsubscribe, bounce, and complaint event with timestamp, IP, and user-agent. |
-| **Tracking base URL** | The root URL of the tracker worker (`TRACKING_BASE_URL`, e.g. `https://track.eneanewsletter.it`). Used as the prefix for all tracking and unsubscribe URLs. |
+| **Tracking base URL** | The root URL of the tracker worker (`TRACKING_BASE_URL`, e.g. `https://track.yourdomain.com`). Used as the prefix for all tracking and unsubscribe URLs. |
 
 ---
 
@@ -214,7 +214,7 @@ compromised; otherwise keep it stable.
 | Setting / Secret | Where | Default | Meaning |
 | --- | --- | --- | --- |
 | `TRACKING_ENABLED` | D1 settings | `true` | When `false`, links are not rewritten and no pixel is added. |
-| `TRACKING_BASE_URL` | D1 settings | `https://track.eneanewsletter.it` | Base URL of the tracker worker — prefix for all tracking, download, and unsubscribe URLs. |
+| `TRACKING_BASE_URL` | D1 settings | `https://track.yourdomain.com` | Base URL of the tracker worker — prefix for all tracking, download, and unsubscribe URLs. |
 | `LINK_SIGNING_KEY` | Worker Secret (consumer + tracker) | — | HMAC key for click and open-pixel URLs. Must match on both workers. |
 | `ATTACHMENT_SIGNING_KEY` | Worker Secret (consumer + tracker) | — | Separate HMAC key for download URLs. Must match on both workers. |
 
