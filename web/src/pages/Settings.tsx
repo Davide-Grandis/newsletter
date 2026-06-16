@@ -49,13 +49,13 @@ interface Tab {
 // Sections are grouped into a small number of tabs to keep the page scannable.
 const TABS: Tab[] = [
   {
-    id: 'access',
-    label: 'Access',
+    id: 'login',
+    label: 'Login',
     sections: [
   {
-    title: 'Console access (Cloudflare Access)',
+    title: 'Console access',
     description:
-      'Who can sign in to this console is enforced by Cloudflare Access at the edge, using a Zero Trust Emails list.',
+      'Access to this application is enforced by Cloudflare Access at the edge.',
     note:
       'Required one-time setup in the Zero Trust dashboard (the worker never creates these; it only edits list membership):\n\n' +
       '1. Emails list — under My Team \u2192 Lists, create a list of type "Emails". The account that owns it is the Account ID below; the list\u2019s own ID is the List ID below. Do not edit its members by hand — the Users page drives them.\n\n' +
@@ -71,49 +71,16 @@ const TABS: Tab[] = [
     ],
   },
   {
-    // Rendered by a dedicated component (no settings fields). See render below.
-    id: 'superadmins',
-    label: 'Super admins',
-    sections: [],
-  },
-  {
-    id: 'permissions',
-    label: 'Admin permissions',
+    // Super admins list rendered by a dedicated component above the sections loop.
+    id: 'users',
+    label: 'Users',
     sections: [
   {
     title: 'Admin permissions',
     description:
-      'Optional permission for regular admins (super admins always have it). Off by default. Whether an admin can change things is otherwise controlled per-admin by their read-only/edit access, set on each newsletter\u2019s Admins tab.',
+      'Optional permission for newsletter admins (with edit capability) to be able to also create and delete newsletters. Off by default; only super admins can create and delete newsletters.',
     fields: [
-      { key: 'ALLOW_ADMIN_NEWSLETTER_CRUD', label: 'Admins can create/delete newsletters', help: 'When on, edit-capable admins (not just super admins) may create newsletters (they are auto-assigned to ones they create) and delete newsletters they are assigned to.', type: 'boolean', hideKey: true },
-    ],
-  },
-    ],
-  },
-  {
-    id: 'sending',
-    label: 'Email sending',
-    sections: [
-  {
-    title: 'Deployment & routing',
-    description:
-      'Identifiers the admin worker uses to keep Email Routing rules in sync. Changing these takes effect immediately for new newsletter operations.',
-    note:
-      'One-time setup: enable Email Routing “Subaddressing” for the sending domain in the Cloudflare dashboard (Compute → Email Service → Email Routing → Settings). It cannot be toggled via API. It lets the auto-created bounce@<domain> rule capture VERP bounce addresses (bounce+<id>@<domain>); without it, bounce handling will not work.',
-    fields: [
-      { key: 'BASE_DOMAIN', label: 'Sending domain', help: 'The Cloudflare domain name for the Email Sending service. It represents the domain for used for sending and receiving emails.', hideKey: true, hideSource: true, optionsFrom: 'sending-domains' },
-      { key: 'INGEST_WORKER_NAME', label: 'Ingest worker name', help: 'Worker script that Email Routing rules forward inbound mail to. Pick from the Workers in this account.', hideKey: true, sourceBelow: true, optionsFrom: 'workers' },
-    ],
-  },
-  {
-    title: 'Default footer',
-    description:
-      'Appended to every outgoing email unless a newsletter defines its own footer (set on the newsletter\u2019s page). The HTML is sanitized to a safe allow-list when saved.',
-    note:
-      'Tokens you can use: {{unsubscribe_url}}, {{newsletter_name}}, {{email}}. An unsubscribe link is always included even if you omit the token.',
-    fields: [
-      { key: 'DEFAULT_FOOTER_HTML', label: 'HTML footer', help: 'HTML appended to the end of every email body (after tracking instrumentation, so its links are not click-tracked).', type: 'textarea', hideKey: true, rows: 6, compact: true },
-      { key: 'DEFAULT_FOOTER_TEXT', label: 'Plain-text footer', help: 'Footer appended to the plain-text part of every email.', type: 'textarea', hideKey: true, rows: 6, compact: true },
+      { key: 'ALLOW_ADMIN_NEWSLETTER_CRUD', label: 'Admins can create/delete newsletters', help: 'When on, edit-capable admins, in addition to super admins, may create and delete newsletters they are assigned to.', type: 'boolean', hideKey: true },
     ],
   },
     ],
@@ -140,6 +107,34 @@ const TABS: Tab[] = [
     fields: [
       { key: 'BATCH_SIZE', label: 'Queue batch size', help: 'Number of subscribers per queue message.', type: 'number' },
       { key: 'MAX_RAW_BYTES', label: 'Max raw message (bytes)', help: 'Hard cap on a fully built MIME message before sending.', type: 'number' },
+    ],
+  },
+    ],
+  },
+  {
+    id: 'sending',
+    label: 'Email sending',
+    sections: [
+  {
+    title: 'Deployment & routing',
+    description:
+      'Identifiers the admin worker uses to keep Email Routing rules in sync. Changing these takes effect immediately for new newsletter operations.',
+    note:
+      'One-time setup: enable Email Routing "Subaddressing" for the sending domain in the Cloudflare dashboard (Compute → Email Service → Email Routing → Settings). It cannot be toggled via API. It lets the auto-created bounce@<domain> rule capture VERP bounce addresses (bounce+<id>@<domain>); without it, bounce handling will not work.',
+    fields: [
+      { key: 'BASE_DOMAIN', label: 'Sending domain', help: 'The Cloudflare domain name for the Email Sending service. It represents the domain for used for sending and receiving emails.', hideKey: true, hideSource: true, optionsFrom: 'sending-domains' },
+      { key: 'INGEST_WORKER_NAME', label: 'Ingest worker name', help: 'Worker script that Email Routing rules forward inbound mail to. Pick from the Workers in this account.', hideKey: true, sourceBelow: true, optionsFrom: 'workers' },
+    ],
+  },
+  {
+    title: 'Default footer',
+    description:
+      'Appended to every outgoing email unless a newsletter defines its own footer (set on the newsletter\u2019s page). The HTML is sanitized to a safe allow-list when saved.',
+    note:
+      'Tokens you can use: {{unsubscribe_url}}, {{newsletter_name}}, {{email}}. An unsubscribe link is always included even if you omit the token.',
+    fields: [
+      { key: 'DEFAULT_FOOTER_HTML', label: 'HTML footer', help: 'HTML appended to the end of every email body (after tracking instrumentation, so its links are not click-tracked).', type: 'textarea', hideKey: true, rows: 6, compact: true },
+      { key: 'DEFAULT_FOOTER_TEXT', label: 'Plain-text footer', help: 'Footer appended to the plain-text part of every email.', type: 'textarea', hideKey: true, rows: 6, compact: true },
     ],
   },
     ],
@@ -346,7 +341,7 @@ export default function Settings() {
         </p>
       </div>
 
-      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800">
+      <div className="flex gap-1 border-b border-slate-200 dark:border-slate-800 mb-6">
         {TABS.map((t) => (
           <TabButton
             key={t.id}
@@ -361,7 +356,11 @@ export default function Settings() {
         ))}
       </div>
 
-      {activeTab.id === 'superadmins' && <SuperAdmins />}
+      {activeTab.id === 'users' && (
+        <div className="border border-slate-200 rounded-lg dark:border-slate-700 overflow-hidden">
+          <SuperAdmins />
+        </div>
+      )}
 
       {saveWarn && (
         <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">

@@ -1,5 +1,10 @@
 // Central runtime configuration shared by every worker.
 //
+// Note: the empty-string entries in this file aren't unused. They're intentionally empty
+//  because they're deployment-specific values that have no sensible built-in default
+//  and must be set via the Settings page (or manually in D1).
+//  The empty string just means "no code default; must be configured per deployment.
+//
 // Tunables are overridable at runtime via the D1 `settings` table, edited from
 // the admin console's Settings page. Resolution order for any key is just two
 // levels: D1 `settings` row -> built-in default below.
@@ -112,14 +117,14 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   // Empty by default: set the Turnstile site key from the Settings page once the
   // widget exists. Empty means the public signup page is unavailable.
   TURNSTILE_SITE_KEY: '',
-  MAX_ATTACHMENT_BYTES: '10485760',
-  MAX_TOTAL_ATTACHMENT_BYTES: '20971520',
+  MAX_ATTACHMENT_BYTES: '3145728',
+  MAX_TOTAL_ATTACHMENT_BYTES: '10485760',
   MAX_ATTACHMENT_COUNT: '10',
   ALLOWED_MIME: 'image/*,application/pdf,text/plain,text/csv,application/zip',
   BLOCKED_EXTENSIONS: 'exe,js,bat,cmd,scr,com,vbs,ps1',
-  ATTACHMENT_LINK_THRESHOLD_BYTES: '8388608',
+  ATTACHMENT_LINK_THRESHOLD_BYTES: '1048576',
   BATCH_SIZE: '100',
-  MAX_RAW_BYTES: '39000000',
+  MAX_RAW_BYTES: '5242880',
   RETENTION_DAYS: '90',
   HARD_BOUNCE_THRESHOLD: '1',
   SOFT_BOUNCE_THRESHOLD: '5',
