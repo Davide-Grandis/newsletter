@@ -37,9 +37,10 @@ export interface Env {
   // under /media/*. The whole worker sits behind Cloudflare Access, so
   // these objects are only reachable by authenticated operators.
   ASSETS_R2: R2Bucket;
-  // Warmup schedule — kept in sync with the consumer worker so the admin GUI
+  // Warmup settings — kept in sync with the consumer worker so the admin GUI
   // can show the weekly schedule and current progression.
   WARMUP_SCHEDULE?: string;
+  DAILY_CAP_FALLBACK?: string;
   // Email Routing automation. When a newsletter is created/renamed/deleted the
   // admin worker keeps a matching Email Routing rule in sync so its
   // `inbound_address` is forwarded to the ingest worker. Best-effort: if these
@@ -187,6 +188,7 @@ const NUMERIC_SETTINGS = new Set<string>([
   'RETENTION_DAYS',
   'HARD_BOUNCE_THRESHOLD',
   'SOFT_BOUNCE_THRESHOLD',
+  'DAILY_CAP_FALLBACK',
 ]);
 
 // Settings that must be the string 'true' or 'false'.

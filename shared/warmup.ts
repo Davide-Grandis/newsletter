@@ -62,7 +62,7 @@ export function readWarmupConfig(env: Record<string, string | undefined>): Warmu
   return {
     targetWeekly: schedule[schedule.length - 1]!,
     schedule,
-    fallbackDailyCap: DEFAULT_FALLBACK_DAILY_CAP,
+    fallbackDailyCap: numOr(env.DAILY_CAP_FALLBACK, DEFAULT_FALLBACK_DAILY_CAP),
   };
 }
 

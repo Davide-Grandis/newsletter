@@ -48,9 +48,10 @@ export interface Env {
   MAX_RAW_BYTES: string;
   LINK_SIGNING_KEY: string;
   ATTACHMENT_SIGNING_KEY: string;
-  // Warmup schedule (setting, with built-in default). Warmup is always on;
-  // target weekly and fallback daily cap are derived/hardwired in shared/warmup.ts.
+  // Warmup settings (with built-in defaults). Warmup is always on;
+  // target weekly is derived from the last schedule element.
   WARMUP_SCHEDULE?: string;
+  DAILY_CAP_FALLBACK?: string;
   // Used to read the account's daily sending quota from the Cloudflare API
   // once per UTC day. ACCESS_ACCOUNT_ID is a setting (resolved from D1);
   // CF_READ_API_TOKEN is a Worker secret. If either is missing, the warmup
