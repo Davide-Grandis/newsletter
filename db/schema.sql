@@ -180,48 +180,14 @@ CREATE INDEX IF NOT EXISTS idx_admins_newsletters_newsletter
   ON admins_newsletters(newsletter_id);
 
 -- Global runtime configuration, editable from the admin console's Settings
--- page. D1 is the canonical source of truth for all setting defaults; the
--- INSERT OR IGNORE block below seeds them on first schema application.
--- `shared/settings.ts` SETTINGS_DEFAULTS are an emergency fallback only
--- (used when the settings table is absent or a key has no row).
--- Only keys in that file's allow-list are honoured by workers.
+-- page. A row overrides the corresponding built-in default in
+-- `shared/settings.ts` (SETTINGS_DEFAULTS); absent keys fall back to those
+-- defaults. Only keys in that file's allow-list are honoured by workers.
 CREATE TABLE IF NOT EXISTS settings (
   key        TEXT PRIMARY KEY,
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
--- Default values. INSERT OR IGNORE means existing rows (manual overrides)
--- are never overwritten when the schema is re-applied.
-INSERT OR IGNORE INTO settings (key, value) VALUES
-  ('INGEST_WORKER_NAME',          'newsletter-ingest'),
-  ('ALLOW_ADMIN_NEWSLETTER_CRUD', 'false'),
-  ('FROM_ADDRESS',                'Newsletter <newsletter@yourdomain.com>'),
-  ('TRACKING_BASE_URL',           'https://track.yourdomain.com'),
-  ('DEFAULT_FOOTER_HTML',
-    '<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px">
-<p style="font-size:12px;line-height:1.5;color:#64748b;margin:0">
-You are receiving this email because you subscribed to {{newsletter_name}}.<br>
-<a href="{{unsubscribe_url}}" style="color:#64748b">Unsubscribe</a> at any time.
-</p>'),
-  ('DEFAULT_FOOTER_TEXT',
-    '--
-You are receiving this email because you subscribed to {{newsletter_name}}.
-Unsubscribe: {{unsubscribe_url}}'),
-  ('TRACKING_ENABLED',                'true'),
-  ('MAX_ATTACHMENT_BYTES',            '10485760'),
-  ('MAX_TOTAL_ATTACHMENT_BYTES',      '20971520'),
-  ('MAX_ATTACHMENT_COUNT',            '10'),
-  ('ALLOWED_MIME',                    'image/*,application/pdf,text/plain,text/csv,application/zip'),
-  ('BLOCKED_EXTENSIONS',              'exe,js,bat,cmd,scr,com,vbs,ps1'),
-  ('ATTACHMENT_LINK_THRESHOLD_BYTES', '8388608'),
-  ('BATCH_SIZE',                      '100'),
-  ('MAX_RAW_BYTES',                   '39000000'),
-  ('RETENTION_DAYS',                  '90'),
-  ('HARD_BOUNCE_THRESHOLD',           '1'),
-  ('SOFT_BOUNCE_THRESHOLD',           '5'),
-  ('WARMUP_SCHEDULE',                 '[500, 1500, 5000, 12000, 25000, 40000]'),
-  ('DAILY_CAP_FALLBACK',              '1000');
 
 -- Warmup is stateful and demand-driven (no fixed start date). A single row
 -- (id=1) tracks where the sender is in the weekly ramp and caches the daily

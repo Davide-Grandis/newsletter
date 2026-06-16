@@ -76,10 +76,9 @@ export function isSettingKey(k: string): k is SettingKey {
   return ALLOWED.has(k);
 }
 
-// Emergency fallback defaults — used only when a key has no row in the D1
-// `settings` table (e.g. before schema.sql has been applied). D1 is the
-// canonical source of truth: all meaningful defaults are seeded by the
-// INSERT OR IGNORE block in db/schema.sql on first schema application.
+// Built-in defaults — the canonical source of truth for every configurable
+// value. A D1 `settings` row overrides the value here; absent rows fall back
+// to these. Change a default here and redeploy; do not seed D1 for defaults.
 export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   // No built-in default: the Email Routing zone is deployment-specific and is
   // configured exclusively via the D1 `settings` table (Settings page).
