@@ -76,10 +76,10 @@ export function isSettingKey(k: string): k is SettingKey {
   return ALLOWED.has(k);
 }
 
-// Built-in defaults — the single source of truth for every configurable value.
-// Deployment-specific values (zone id, domains, sending identity) live here too
-// now that worker `[vars]` are gone; edit them here or override per-deployment
-// via the D1 `settings` table (Settings page).
+// Emergency fallback defaults — used only when a key has no row in the D1
+// `settings` table (e.g. before schema.sql has been applied). D1 is the
+// canonical source of truth: all meaningful defaults are seeded by the
+// INSERT OR IGNORE block in db/schema.sql on first schema application.
 export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   // No built-in default: the Email Routing zone is deployment-specific and is
   // configured exclusively via the D1 `settings` table (Settings page).
