@@ -185,7 +185,6 @@ const TABS: Tab[] = [
       'IP/domain warmup is always on and demand-driven (no start date). The sender enters week 0 the first time there are more than 499 emails to send, then advances one weekly step at a time, only when the backlog grows to the next step. The daily cap is read live from the Cloudflare API; the values below are informative and shown under "Sending usage" above.',
     fields: [
       { key: 'WARMUP_SCHEDULE', label: 'Weekly schedule (JSON)', help: 'JSON array of weekly caps stepped through during warmup, e.g. [500, 1500, 5000, 12000, 25000, 40000]. Each value is also the demand threshold to enter that week. Steady state is the last element.', type: 'textarea' },
-      { key: 'DAILY_CAP_FALLBACK', label: 'Fallback daily cap', help: 'Daily cap used only when the live Cloudflare API quota cannot be read (e.g. missing API token or network error).', type: 'number' },
     ],
   },
     ],
