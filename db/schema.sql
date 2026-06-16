@@ -31,9 +31,6 @@ CREATE TABLE IF NOT EXISTS newsletters (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_name ON newsletters(name COLLATE NOCASE);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_slug ON newsletters(slug);
 
--- Seed a default newsletter so a fresh install works out of the box.
-INSERT OR IGNORE INTO newsletters (id, name, inbound_address, enabled)
-  VALUES ('default', 'Default', 'newsletter@eneanewsletter.it', 1);
 
 -- Authors authorized to send a given newsletter by emailing the ingest worker.
 -- Inbound email's `From:` header is checked against this table, scoped to the

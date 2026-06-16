@@ -203,8 +203,7 @@ done
 ### Admin worker deploy script
 
 `scripts/deploy-admin.sh` is a convenience wrapper that builds the SPA,
-deploys only the admin worker (pinned to the ENEA PoC account so wrangler
-doesn't prompt), then commits any pending changes and pushes to GitHub.
+deploys only the admin worker, then commits any pending changes and pushes to GitHub.
 
 ```bash
 ./scripts/deploy-admin.sh "optional commit message"
