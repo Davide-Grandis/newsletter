@@ -12,12 +12,24 @@ CREATE TABLE IF NOT EXISTS newsletters (
   -- Optional per-newsletter sender (the outgoing `From:`). NULL falls back to
   -- the global FROM_ADDRESS setting. Must be on the configured sending domain.
   from_address    TEXT,
+  -- Optional per-newsletter email footer (HTML + plain text). NULL/empty falls
+  -- back to the global DEFAULT_FOOTER_HTML / DEFAULT_FOOTER_TEXT settings. May
+  -- contain {{unsubscribe_url}}, {{newsletter_name}}, {{email}} tokens; the
+  -- consumer always guarantees an unsubscribe link (see shared/footer.ts).
+  footer_html     TEXT,
+  footer_text     TEXT,
+  -- Clean public identifier for the subscribe URL (/subscribe/<slug>). NULL
+  -- until set; the unique index allows many NULLs.
+  slug            TEXT,
+  -- Per-newsletter switch: the public subscribe page only works when this is 1.
+  allow_public_signup INTEGER NOT NULL DEFAULT 0,
   enabled         INTEGER NOT NULL DEFAULT 1,
   created_at      TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 -- Newsletter names must be unique, case-insensitively.
 CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_name ON newsletters(name COLLATE NOCASE);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_newsletters_slug ON newsletters(slug);
 
 -- Seed a default newsletter so a fresh install works out of the box.
 INSERT OR IGNORE INTO newsletters (id, name, inbound_address, enabled)
@@ -47,6 +59,9 @@ CREATE TABLE IF NOT EXISTS subscribers (
   bounce_count    INTEGER NOT NULL DEFAULT 0,
   last_bounce_at  TEXT,
   token           TEXT NOT NULL,
+  -- Double opt-in token, separate from `token` (the unsubscribe token). Set
+  -- while a public signup is pending (verified=0); cleared on confirmation.
+  confirm_token   TEXT,
   UNIQUE (newsletter_id, email)
 );
 CREATE INDEX IF NOT EXISTS idx_subscribers_status ON subscribers(status);
@@ -135,15 +150,37 @@ CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs(ts);
 CREATE INDEX IF NOT EXISTS idx_logs_campaign ON logs(campaign_id);
 
 -- Admin console users. Identity is provided by Cloudflare Access; this table
--- only stores per-user UI preferences so the chosen theme follows the user
--- across devices/browsers. A row is created on first login, seeded with the
--- theme the client detected (OS preference) at that time.
+-- stores each user's role and per-user UI preferences (theme follows the user
+-- across devices/browsers). On first login, if this table is empty the worker
+-- promotes the authenticated Access user to super_admin (bootstrap); otherwise
+-- a row is created/updated as the user is managed from the console.
+--
+--   * super_admin: full access to the application and global settings.
+--   * admin:       scoped to the newsletters listed in admins_newsletters.
+-- In case of conflict, super_admin wins.
 CREATE TABLE IF NOT EXISTS admins (
   email      TEXT PRIMARY KEY COLLATE NOCASE,
+  role       TEXT NOT NULL DEFAULT 'admin' CHECK (role IN ('super_admin','admin')),
+  -- For role='admin' only: read_only (view) vs edit (manage content + admins).
+  -- super_admins ignore this. New admins default to read_only.
+  capability TEXT NOT NULL DEFAULT 'read_only' CHECK (capability IN ('read_only','edit')),
   theme      TEXT NOT NULL DEFAULT 'light' CHECK (theme IN ('light','dark')),
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Newsletters an admin is allowed to manage (many-to-many). Super admins
+-- ignore this table (they implicitly see every newsletter). Deleting a
+-- newsletter removes its assignments; the application enforces that each
+-- newsletter keeps at least one admin.
+CREATE TABLE IF NOT EXISTS admins_newsletters (
+  email         TEXT NOT NULL COLLATE NOCASE,
+  newsletter_id TEXT NOT NULL REFERENCES newsletters(id) ON DELETE CASCADE,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (email, newsletter_id)
+);
+CREATE INDEX IF NOT EXISTS idx_admins_newsletters_newsletter
+  ON admins_newsletters(newsletter_id);
 
 -- Global runtime configuration, editable from the admin console's Settings
 -- page. A row overrides the corresponding worker env var / built-in default;
@@ -154,3 +191,25 @@ CREATE TABLE IF NOT EXISTS settings (
   value      TEXT NOT NULL,
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+-- Warmup is stateful and demand-driven (no fixed start date). A single row
+-- (id=1) tracks where the sender is in the weekly ramp and caches the daily
+-- sending quota read from the Cloudflare API once per UTC day.
+--
+--   level           : current warmup week index (0-based) into the weekly
+--                     schedule; NULL until warmup starts (demand first > 499).
+--   week_started_at : UTC 'YYYY-MM-DD HH:MM:SS' start of the current 7-day
+--                     weekly window. The weekly cap counts sends since this.
+--   daily_cap       : last daily sending cap read from the Cloudflare API,
+--                     normalized to a per-day figure. NULL until first read.
+--   daily_cap_date  : UTC 'YYYY-MM-DD' the daily cap was read (refreshed once
+--                     per day by the consumer before it processes the queue).
+CREATE TABLE IF NOT EXISTS warmup_state (
+  id              INTEGER PRIMARY KEY CHECK (id = 1),
+  level           INTEGER,
+  week_started_at TEXT,
+  daily_cap       INTEGER,
+  daily_cap_date  TEXT,
+  updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO warmup_state (id, level, week_started_at) VALUES (1, NULL, NULL);

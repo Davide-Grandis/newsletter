@@ -9,6 +9,38 @@ links) and sends it through the `SEND_EMAIL` Email Sending (beta) binding.
 Bounces, opens, clicks, downloads and unsubscribes are logged to D1, with
 raw archives in R2.
 
+## Features
+
+- **Multi-tenant newsletters** — each newsletter is an independent list with its
+  own inbound address, sender, footer, author allow-list and subscribers.
+- **Inbound-by-email authoring** — authors send an issue by emailing the
+  newsletter's address; only allow-listed senders are accepted (edge SPF/DKIM/
+  DMARC enforced by Email Routing).
+- **Attachments** — validation (count/size/MIME/extension caps), SHA-256
+  dedupe, R2 storage, and automatic **link mode** (signed download links) for
+  large attachments. Inline `cid:` images are preserved. See
+  [`docs/attachments.md`](docs/attachments.md).
+- **Open & click tracking** — invisible pixel + HMAC-signed click redirects,
+  logged to the `events` table. Toggle off with `TRACKING_ENABLED`. See
+  [`docs/tracking.md`](docs/tracking.md).
+- **Subscribe / unsubscribe** — manual add, CSV import/export, and a hosted
+  **public signup page** with **double opt-in** protected by Cloudflare
+  Turnstile; one-click (RFC 8058) and `mailto:` unsubscribe. See
+  [`docs/subscribe-unsubscribe.md`](docs/subscribe-unsubscribe.md).
+- **Per-newsletter footers & senders** — override the global default footer and
+  `From:` address per newsletter, with token substitution and a guaranteed
+  unsubscribe link.
+- **Demand-driven warmup** — weekly stepped cap plus the account's live daily
+  Cloudflare quota gate outbound volume to protect reputation. See
+  [`docs/warmup.md`](docs/warmup.md).
+- **Bounce & complaint handling** — VERP DSN/ARF parsing updates subscriber
+  status past configurable thresholds.
+- **Retention** — a nightly cron purges campaigns (and their R2 bytes) older
+  than `RETENTION_DAYS`. See [`docs/retention.md`](docs/retention.md).
+- **Admin console** — React SPA behind Cloudflare Access with role-based
+  access (super admins + per-newsletter admins with read-only/edit
+  capability), analytics, logs, and runtime settings.
+
 ## Components
 
 | Worker      | Type           | Purpose                                                        |
@@ -24,10 +56,11 @@ raw archives in R2.
 
 ```
 workers/{ingest,consumer,tracker,bounce,cleanup,admin}/
-shared/{mime,attachments,tracking,db}.ts
+shared/{mime,attachments,tracking,db,settings,footer,quota,warmup,types}.ts
 web/                       # Vite + React admin SPA
-db/{schema.sql,migrations/}
-docs/workers.md            # per-worker deep dives
+db/{schema.sql,reset.sql,migrations/}
+docs/                      # workers, warmup, attachments, tracking,
+                           # retention, subscribe-unsubscribe, help, deploy
 ```
 
 ## Admin GUI
@@ -56,16 +89,31 @@ wrangler r2 object put newsletter-admin/logoenea1.png \
 
 Pages:
 
-- **Dashboard** — subscriber/campaign/event totals, warmup quota, last-7-day rollup.
+- **Dashboard** — subscriber/campaign/event totals, last-7-day rollup.
 - **Newsletters** — create/rename/delete newsletters (each with its own inbound
   address, subscribers and authors); sortable, searchable list. Email Routing
-  rules are kept in sync automatically.
-- **Subscribers** (per newsletter) — paginated, sortable search; add manually;
-  CSV import (position-based, with duplicate detection) and CSV export; tracks a
-  `verified` flag and delivery `status`.
-- **Authors** (per newsletter) — manage the allow-list of inbound senders.
+  rules are kept in sync automatically. Each newsletter has tabs for:
+  - **Subscribers** — paginated, sortable search; add manually; CSV import
+    (position-based, with duplicate detection) and CSV export; tracks a
+    `verified` flag and delivery `status`.
+  - **Authors** — manage the allow-list of inbound senders.
+  - **Admins** — assign per-newsletter admins and their read-only/edit capability.
+  - **Signup** — enable the hosted public subscribe page (double opt-in via
+    Turnstile), set the URL slug, and copy the embed snippet.
+  - **Email footer** — per-newsletter HTML/text footer with live preview.
 - **Campaigns** — list and per-campaign drill-down with stacked event chart and per-recipient `sends` table.
 - **Bounces** — last 7 days, status code colour-coded.
+- **Analytics** (Logs) — merged pipeline log + engagement event stream, filterable by source/level.
+- **Settings** (super admin) — runtime configuration grouped by tab (Access,
+  Email sending, Tracking & signup, Attachments, Retention, etc.), the
+  **Super admins** tab, and a live **Sending usage** panel (daily quota, emails
+  sent, warmup week and weekly progression).
+- **Help** — the rendered help document (`help.md`, served from R2).
+
+**Roles:** *super admins* have full access including Settings; *admins* are
+scoped to their assigned newsletters with either *read-only* or *edit*
+capability. Identity comes from Cloudflare Access; the first user to sign in to
+an empty `admins` table is bootstrapped as super admin.
 
 Each operator's **theme** (light/dark) is saved server-side in the `admins`
 table and follows them across devices; new operators are seeded with their OS
@@ -125,7 +173,23 @@ wrangler secret put ATTACHMENT_SIGNING_KEY  --name tracker
 # Optional — lets it auto-manage Email Routing rules for newsletter inbound
 # addresses (token needs Zone → Email Routing Rules → Edit):
 (cd workers/admin && wrangler secret put CF_API_TOKEN)
+# Optional — lets it auto-resolve the Email Routing zone ID from the sending
+# domain when you save it on the Settings page (token needs Zone → Read):
+(cd workers/admin && wrangler secret put CF_READ_API_TOKEN)
 ```
+
+The admin worker uses three optional Cloudflare API tokens, all stored as
+encrypted Wrangler **secrets** on the `newsletter-admin` worker (visible in the
+dashboard under **Settings → Variables and Secrets**, not under *Bindings*):
+
+| Secret | Permission | Purpose |
+| ------ | ---------- | ------- |
+| `CF_API_TOKEN` | Zone → Email Routing Rules → Edit | Create/move/delete the Email Routing rule for each newsletter's inbound address. |
+| `CF_READ_API_TOKEN` | Read all resources (account-scoped) | Look up the Email Routing zone ID from `BASE_DOMAIN` when the sending domain is saved, and read each domain's Email Routing status for the Settings pick-list. (Zone → Read alone resolves the zone ID but cannot read Email Routing status.) |
+| `CF_ZT_API_TOKEN` | Account → Zero Trust → Edit | Keep the Cloudflare Access "Emails" list in sync as console users are added/removed. |
+
+All three are best-effort: if a token is unset (or lacks scope) the related
+action still succeeds and the console surfaces a warning instead of failing.
 
 ## Deploy
 
@@ -172,24 +236,31 @@ Email Routing / Email Sending setup from [*Prerequisites*](#prerequisites):
 | Setting | Purpose |
 | ------- | ------- |
 | `FROM_ADDRESS` | Default `From:` header for outbound mail (a newsletter may override its own sender). |
-| `BASE_DOMAIN` | Domain newsletters receive inbound mail on. |
-| `BOUNCE_DOMAIN` | Domain for VERP bounce return-path addresses (`bounce+<id>@`). |
+| `BASE_DOMAIN` | Sending domain — the Cloudflare zone newsletters send from and receive inbound mail on. Also used for VERP bounce return-path addresses (`bounce+<id>@`). Saving it auto-resolves `EMAIL_ROUTING_ZONE_ID` and auto-creates the `bounce@<domain>` Email Routing rule. **One-time:** enable Email Routing *Subaddressing* for the domain in the dashboard (not API-configurable) so `bounce+<id>@` reaches the bounce worker. |
 | `TRACKING_BASE_URL` | Base URL of the tracker worker (opens, clicks, unsubscribe, downloads). |
-| `EMAIL_ROUTING_ZONE_ID` | Zone whose Email Routing forwards inbound mail to the ingest worker. |
 | `INGEST_WORKER_NAME` | Worker script the auto-managed Email Routing rules target. |
+| `DEFAULT_FOOTER_HTML` / `DEFAULT_FOOTER_TEXT` | Global default email footer appended to every message, unless a newsletter sets its own footer. Supports `{{unsubscribe_url}}`, `{{newsletter_name}}`, `{{email}}` tokens; an unsubscribe link is always added. HTML is sanitized to an allow-list on save. |
 
-The defaults ship configured for `eneanewsletter.it`; change them for any other
-deployment.
+`BASE_DOMAIN` and `EMAIL_ROUTING_ZONE_ID` have **no built-in defaults** — they
+live only in the D1 `settings` table and must be set per deployment. The other
+values above ship with defaults you can change.
 
-**Why `EMAIL_ROUTING_ZONE_ID`?** When a newsletter is created, renamed or
-deleted, the admin worker automatically creates/moves/deletes the matching Email
-Routing rule (newsletter inbound address → ingest worker). Cloudflare's Email
-Routing API is scoped per zone, so this automation needs the zone ID to know
-which zone's routing table to edit — together with the `CF_API_TOKEN` secret
-(Zone → Email Routing Rules → Edit) for permission and `INGEST_WORKER_NAME` as
-the rule's target. It is **not** needed for sending: if the zone ID or token is
-unset, newsletter management still works but routing rules are not synced (the
-console warns and you must add each rule manually in the Cloudflare dashboard).
+**Why `EMAIL_ROUTING_ZONE_ID` (and how it's set)?** When a newsletter is
+created, renamed or deleted, the admin worker automatically creates/moves/deletes
+the matching Email Routing rule (newsletter inbound address → ingest worker).
+Cloudflare's Email Routing API is scoped per zone, so this automation needs the
+zone ID to know which zone's routing table to edit — together with the
+`CF_API_TOKEN` secret (Zone → Email Routing Rules → Edit) for permission and
+`INGEST_WORKER_NAME` as the rule's target.
+
+You no longer enter the zone ID by hand. It is **derived from `BASE_DOMAIN`**:
+when you save the sending domain on the Settings page, the worker calls the
+Cloudflare API (`GET /zones?name=<domain>`) using the `CF_READ_API_TOKEN` secret
+(Zone → Read) and stores the resolved id in D1 — so the field is hidden from the
+UI. If `CF_READ_API_TOKEN` is unset, the domain isn't a zone in the account, or
+the token lacks scope, the domain still saves and the console shows a warning;
+you can then add the routing rules manually in the Cloudflare dashboard. Routing
+automation is **not** needed for sending.
 
 ## Configuration knobs
 
@@ -265,15 +336,19 @@ Author ──▶ Email Routing ──▶ Ingest Worker (Email handler)
 The system is **multi-tenant**: a `newsletters` row is the parent of its own
 authors, subscribers and campaigns (all scoped by `newsletter_id`).
 
-- `newsletters(id, name, inbound_address UNIQUE, enabled, created_at)`
+- `newsletters(id, name, inbound_address UNIQUE, from_address NULL, footer_html NULL, footer_text NULL, slug UNIQUE NULL, allow_public_signup, enabled, created_at)` — `footer_*` override the global `DEFAULT_FOOTER_*` per newsletter; `slug` + `allow_public_signup` back the public subscribe page (`/subscribe/<slug>`).
 - `authors(newsletter_id, email, name, created_at, PRIMARY KEY(newsletter_id, email))` — per-newsletter inbound-sender allow-list.
-- `subscribers(id, newsletter_id, email, name, verified, status, subscribed_at, unsubscribed_at, bounce_count, last_bounce_at, token, UNIQUE(newsletter_id, email))`
+- `subscribers(id, newsletter_id, email, name, verified, status, subscribed_at, unsubscribed_at, bounce_count, last_bounce_at, token, confirm_token NULL, UNIQUE(newsletter_id, email))` — `token` authenticates unsubscribe links; `confirm_token` is the pending double opt-in flag (cleared on confirmation).
 - `campaigns(id, newsletter_id, subject, html, text, sent_by, created_at, status, total_recipients, sent_count, failed_count, attachment_count, attachment_total_bytes, link_mode)`
 - `attachments(id, campaign_id, r2_key, filename, content_type, size, sha256, content_id NULL, disposition ['attachment'|'inline'], created_at)`
 - `sends(id, campaign_id, subscriber_id, status, queued_at, sent_at, error, message_id, UNIQUE(campaign_id, subscriber_id))`
 - `events(id, campaign_id, subscriber_id, type ['open'|'click'|'bounce'|'complaint'|'unsubscribe'|'download'], attachment_id NULL, url, ts, ua, ip)`
-- `admins(email PK, theme ['light'|'dark'], created_at, updated_at)` — console operators' saved UI preferences; identity itself comes from Cloudflare Access.
-- Indexes: `subscribers(status)`, `subscribers(newsletter_id)`, `campaigns(newsletter_id)`, `sends(campaign_id, status)`, `events(campaign_id, type)`, `attachments(campaign_id)`.
+- `admins(email PK, role ['super_admin'|'admin'], capability ['read_only'|'edit'], theme ['light'|'dark'], created_at, updated_at)` — console operators' role and saved UI preferences; identity itself comes from Cloudflare Access.
+- `admins_newsletters(email, newsletter_id, PRIMARY KEY(email, newsletter_id))` — which newsletters each (non-super) admin may manage.
+- `logs(id, ts, level, source, event, campaign_id, newsletter_id, message, detail)` — pipeline activity log surfaced on the Analytics page.
+- `settings(key PK, value, updated_at)` — runtime configuration overrides edited from the Settings page.
+- `warmup_state(id=1, level, week_started_at, daily_cap, daily_cap_date, updated_at)` — singleton demand-driven warmup progression + cached daily quota.
+- Indexes: `subscribers(status)`, `subscribers(newsletter_id)`, `campaigns(newsletter_id)`, `sends(campaign_id, status)`, `events(campaign_id, type)`, `attachments(campaign_id)`, `logs(ts)`, `logs(campaign_id)`.
 - Cascades: deleting a newsletter removes its authors/subscribers/campaigns; deleting a campaign removes its attachments/sends/events (`ON DELETE CASCADE`).
 
 ## 4. Queue — `newsletter-queue`
@@ -316,14 +391,16 @@ authors, subscribers and campaigns (all scoped by `newsletter_id`).
 - `await env.SEND_EMAIL.send(new EmailMessage(from, to, raw))`.
 - On success → update `sends`, increment `campaigns.sent_count`.
 - On error → log to `sends`; `msg.ack()` for permanent failures, `msg.retry()` for transient; exhausted retries flow to DLQ.
-- Bindings: `DB`, `ARCHIVE`, `SEND_EMAIL`, vars `FROM_ADDRESS`, `TRACKING_BASE_URL`, `BOUNCE_DOMAIN`.
+- Bindings: `DB`, `ARCHIVE`, `SEND_EMAIL`, vars `FROM_ADDRESS`, `TRACKING_BASE_URL`, `BASE_DOMAIN`.
 
 ### c) `tracker-worker` (HTTP Worker)
 - `GET /o/:campaign/:sub.gif` → log open, return 1×1 GIF.
 - `GET /c/:campaign/:sub?u=<encoded>&sig=...` → verify HMAC, log click, 302.
 - `GET /u/:sub?t=<token>` → unsubscribe page; `POST /u/:sub` → one-click unsubscribe (`List-Unsubscribe-Post`).
 - `GET /a/:campaign/:sub/:attId?sig=...` → verify HMAC, stream attachment from R2 (link-mode), log `events(type='download', attachment_id)`.
-- Bindings: `DB`, `ARCHIVE`, secrets `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`.
+- `GET|POST /subscribe/:slug` → hosted double opt-in signup form (Turnstile-protected); sends the confirmation email via `SEND_EMAIL`.
+- `GET /verify/:sub?t=<confirm_token>` → confirm a pending public signup.
+- Bindings: `DB`, `ARCHIVE`, optional `SEND_EMAIL`, secrets `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`, optional `TURNSTILE_SECRET_KEY`.
 
 ### d) `bounce-worker` (Email Worker)
 - Receives DSN/ARF at `bounce+<campaignId>.<subscriberId>@`; map back via VERP.
@@ -340,8 +417,9 @@ authors, subscribers and campaigns (all scoped by `newsletter_id`).
   `/api/*` request without it gets 401.
 - Endpoints: newsletter CRUD (with Email Routing rule sync), per-newsletter
   subscriber CRUD + CSV import/export, author allow-list CRUD, campaign list +
-  stats, bounces, warmup quota (`/api/quota`), identity (`/api/me`) and the
-  operator's theme preference (`PUT /api/preferences`).
+  stats, bounces, Email Sending usage + warmup (`/api/email-sending-stats`),
+  identity (`/api/me`) and the operator's theme preference
+  (`PUT /api/preferences`).
 
 ## 7. Repo Layout
 
@@ -362,15 +440,20 @@ newsletter/
 │   ├── attachments.ts            # validation, hashing, R2 helpers
 │   ├── tracking.ts               # HMAC link signing + pixel/link rewriting
 │   ├── db.ts                     # D1 helpers
+│   ├── settings.ts               # runtime config keys + defaults + resolver
+│   ├── footer.ts                 # footer tokens + HTML sanitizer
+│   ├── quota.ts                  # Cloudflare daily sending quota fetch
+│   ├── warmup.ts                 # demand-driven warmup state machine
 │   └── types.ts
 └── db/
     ├── schema.sql
+    ├── reset.sql
     └── migrations/
 ```
 
 ## 8. Configuration (settings / secrets)
-- Settings (resolved from the D1 `settings` table → built-in defaults in `shared/settings.ts`, editable on the console's **Settings** page; see [*Initialization*](#initialization)): `EMAIL_ROUTING_ZONE_ID`, `INGEST_WORKER_NAME`, `BASE_DOMAIN`, `FROM_ADDRESS`, `BOUNCE_DOMAIN`, `TRACKING_BASE_URL`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`, and the `WARMUP_*` keys.
-- Secrets (`wrangler secret put`): `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`. The admin worker has no auth secret — front it with a Cloudflare Access application; it optionally takes `CF_API_TOKEN` to auto-manage Email Routing rules.
+- Settings (resolved from the D1 `settings` table → built-in defaults in `shared/settings.ts`, editable on the console's **Settings** page; see [*Initialization*](#initialization)): `EMAIL_ROUTING_ZONE_ID`, `INGEST_WORKER_NAME`, `BASE_DOMAIN`, `ACCESS_ACCOUNT_ID`, `ACCESS_LIST_ID`, `ALLOW_ADMIN_NEWSLETTER_CRUD`, `FROM_ADDRESS`, `TRACKING_BASE_URL`, `DEFAULT_FOOTER_HTML`, `DEFAULT_FOOTER_TEXT`, `TRACKING_ENABLED`, `TURNSTILE_SITE_KEY`, `BATCH_SIZE`, `MAX_ATTACHMENT_BYTES`, `MAX_TOTAL_ATTACHMENT_BYTES`, `MAX_ATTACHMENT_COUNT`, `ALLOWED_MIME`, `BLOCKED_EXTENSIONS`, `ATTACHMENT_LINK_THRESHOLD_BYTES`, `MAX_RAW_BYTES`, `RETENTION_DAYS`, `HARD_BOUNCE_THRESHOLD`, `SOFT_BOUNCE_THRESHOLD`, and the `WARMUP_*` keys (`WARMUP_TARGET_WEEKLY`, `WARMUP_SCHEDULE`, `WARMUP_FALLBACK_DAILY_CAP`).
+- Secrets (`wrangler secret put`): `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`. The admin worker has no auth secret — front it with a Cloudflare Access application; it optionally takes three Cloudflare API tokens: `CF_API_TOKEN` (Zone → Email Routing Rules → Edit) to auto-manage Email Routing rules, `CF_READ_API_TOKEN` (Zone → Read, plus Account → Email → Read to also show the daily quota) to auto-resolve the Email Routing zone ID from the sending domain, and `CF_ZT_API_TOKEN` (Account → Zero Trust → Edit) to sync the Cloudflare Access "Emails" list. The **consumer** worker also takes `CF_READ_API_TOKEN` (Account → Email → Read) to read the daily sending quota for warmup.
 
 ## 9. Key Flows
 
@@ -380,56 +463,66 @@ newsletter/
 
 **Bounce**: VERP DSN → Bounce Worker → subscriber + `events` updated; raw archived in R2.
 
-**Unsubscribe**: One-click `POST /u/:sub` (HMAC token) → `subscribers.status='unsubscribed'`.
+**Public signup**: `GET /subscribe/<slug>` (Turnstile) → pending subscriber +
+confirmation email → `GET /verify/<id>?t=` confirms (double opt-in) before any
+mail is sent.
+
+**Unsubscribe**: One-click `POST /u/:sub` (HMAC token) or `mailto:unsubscribe+<id>@` → `subscribers.status='unsubscribed'`.
 
 **Retention**: Cleanup Worker (cron) prunes R2 + D1 per `RETENTION_DAYS`.
 
 ## 9b. Warmup Schedule
 
-To preserve sending reputation when bringing the domain online, the consumer
-worker enforces a stepped weekly cap with a flat daily ceiling. Warmup is
-**off by default** — set `WARMUP_START_DATE` (UTC date of week 0) on the
-console's **Settings** page (or in `shared/settings.ts`) to turn it on. With it
-disabled the consumer behaves exactly as before (no caps).
+To preserve sending reputation, the consumer worker throttles sending against
+two caps (the smaller binds). Warmup is **always on** and **demand-driven** —
+there is no start date.
 
-| Week  | Weekly cap                       | Daily cap |
-| ----- | -------------------------------- | --------- |
-| 0     | 500                              | 5,000     |
-| 1     | 1,500                            | 5,000     |
-| 2     | 5,000                            | 5,000     |
-| 3     | 12,000                           | 5,000     |
-| 4     | 25,000                           | 5,000     |
-| 5     | 40,000                           | 10,000    |
-| 6+    | `WARMUP_TARGET_WEEKLY` (50,000)  | 10,000    |
+- **Weekly cap** — a stepped schedule, the active step being the warmup
+  `level`: `[500, 1500, 5000, 12000, 25000, 40000]` then `WARMUP_TARGET_WEEKLY`
+  (50,000) steady state.
+- **Daily cap** — the account's resolved daily quota, read live from the
+  Cloudflare Email Sending API (`GET /accounts/{id}/email/sending/limits`) once
+  per UTC day by the consumer and cached in `warmup_state`. Falls back to
+  `WARMUP_FALLBACK_DAILY_CAP` when the API can't be read.
 
-Whichever cap (daily or weekly) runs out first throttles. In practice the
-daily cap is non-binding for weeks 0–2 (the weekly cap is lower) and only
-starts to bite from week 3 onwards.
+**Demand-driven progression** (state in the `warmup_state` table):
 
-**Enforcement**: at the start of each `queue()` invocation the consumer
-counts `sends` since the current daily and weekly window starts (UTC), and
-each message either sends in full, sends a partial slice and re-enqueues the
-overflow with `delaySeconds` to the next window, or `msg.retry`s with a
-delay if the cap is already exhausted. Cloudflare Queues caps `delaySeconds`
-at 12 h, so longer waits are achieved by repeated retries.
+- Warmup enters **week 0** the first time *demand* exceeds 499, where demand =
+  emails still to send across active campaigns
+  (`Σ max(total_recipients − sent_count − failed_count, 0)`).
+- Each 7-day window it advances **at most one level**, and **only when demand
+  has grown to the next level's weekly cap** (the threshold to enter week _N_
+  is `schedule[N]`). Otherwise it stays put. Levels never decrease. This avoids
+  the old calendar model's idle weeks and never ramps faster than real volume.
+
+Example (continuous 100K backlog): week0 500 → week1 1,500 → … → week5 40,000 →
+week6 50,000/wk, climbing one step per week. A small 3K campaign starts at
+week 0, advances to week 1 (1,500), then stays because demand never reaches the
+week-2 threshold (5,000).
+
+**Enforcement**: at the start of each `queue()` invocation the consumer reads
+the warmup state, refreshes the daily cap (once per UTC day), computes demand
+and the progression, then counts `sends` since the daily (UTC midnight) and
+weekly (`week_started_at`) window starts. Each message sends in full, sends a
+partial slice and re-enqueues the overflow with `delaySeconds`, or `msg.retry`s
+when the cap is exhausted. Cloudflare Queues caps `delaySeconds` at 12 h, so
+longer waits are achieved by repeated retries.
 
 **Configuration** (settings resolved from the D1 `settings` table → built-in
 defaults in `shared/settings.ts`; edit on the console's **Settings** page):
 
-| Var                       | Default                                  | Meaning                                                |
-| ------------------------- | ---------------------------------------- | ------------------------------------------------------ |
-| `WARMUP_START_DATE`       | `""` (disabled)                          | ISO date of week 0, e.g. `2026-01-06`.                 |
-| `WARMUP_TARGET_WEEKLY`    | `50000`                                  | Steady-state weekly cap from week 6 onwards.           |
-| `WARMUP_SCHEDULE`         | `[500,1500,5000,12000,25000,40000]`      | Per-week weekly caps. Empty array → formula fallback.  |
-| `WARMUP_DAILY_CAP_EARLY`  | `5000`                                   | Daily cap for weeks below `WARMUP_LATE_START_WEEK`.    |
-| `WARMUP_DAILY_CAP_LATE`   | `10000`                                  | Daily cap from `WARMUP_LATE_START_WEEK` onwards.       |
-| `WARMUP_LATE_START_WEEK`  | `5`                                      | First week using the late daily cap.                   |
+| Var                          | Default                              | Meaning                                                       |
+| ---------------------------- | ------------------------------------ | ------------------------------------------------------------- |
+| `WARMUP_TARGET_WEEKLY`       | `50000`                              | Steady-state weekly cap once the schedule is exhausted.       |
+| `WARMUP_SCHEDULE`            | `[500,1500,5000,12000,25000,40000]`  | Per-level weekly caps; each value is also the entry threshold.|
+| `WARMUP_FALLBACK_DAILY_CAP`  | `1000`                               | Daily cap used only when the live API quota can't be read.    |
 
-If `WARMUP_SCHEDULE = "[]"` the formula `min(target, 500 * 2.5^week)` is used
-as a fallback.
+The consumer needs the `CF_READ_API_TOKEN` secret (account **Email: Read**) and
+the `ACCESS_ACCOUNT_ID` setting to read the live daily quota.
 
-**Visibility**: the admin GUI's Dashboard renders two progress bars (Today /
-This week) backed by `GET /api/quota`, polled every 60 s.
+**Visibility**: the console's **Settings → Email sending → Sending usage** panel
+shows the live daily quota, emails sent, the current warmup week, and the full
+weekly progression (read-only), backed by `GET /api/email-sending-stats`.
 
 ## 10. Operational Concerns
 - **Rate limits**: tune queue concurrency to Email Sending quota; intra-batch pacing if needed.
@@ -457,3 +550,10 @@ This week) backed by `GET /api/quota`, polled every 60 s.
 ## Further Reading
 
 - [`docs/workers.md`](docs/workers.md) — per-worker deep dives (purpose, step-by-step walkthrough, design rationale, extension points for ingest, consumer, tracker, bounce, cleanup, admin).
+- [`docs/attachments.md`](docs/attachments.md) — attachment validation, storage, link mode and signed downloads.
+- [`docs/tracking.md`](docs/tracking.md) — open/click tracking mechanics, HMAC signing, and disabling tracking.
+- [`docs/subscribe-unsubscribe.md`](docs/subscribe-unsubscribe.md) — every subscribe/unsubscribe path, double opt-in and the deliverability gate.
+- [`docs/warmup.md`](docs/warmup.md) — demand-driven warmup model, caps, progression and configuration.
+- [`docs/retention.md`](docs/retention.md) — what ages out, the cleanup cron, and cascades.
+- [`docs/deploy.md`](docs/deploy.md) — end-to-end deployment runbook.
+- [`docs/help.md`](docs/help.md) — the in-console help document (served from R2).

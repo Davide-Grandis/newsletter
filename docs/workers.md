@@ -166,7 +166,7 @@ multipart/mixed
 Plus headers: `Message-ID`, `List-Unsubscribe` (with both URL and mailto),
 `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058 — required
 by Gmail/Yahoo bulk-sender rules), and a VERP `Return-Path:
-bounce+<campaignId>.<subscriberId>@<BOUNCE_DOMAIN>` so the bounce worker
+bounce+<campaignId>.<subscriberId>@<BASE_DOMAIN>` so the bounce worker
 can attribute DSNs.
 
 **5. Send.**

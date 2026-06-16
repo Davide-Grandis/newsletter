@@ -8,7 +8,14 @@ import { PAGE_SIZE, Pagination } from '../components/Pagination';
 type SortKey = 'email' | 'name' | 'status' | 'verified' | 'bounce_count' | 'subscribed_at';
 type ImportResult = { added: number; duplicated: number };
 
-export default function Subscribers({ newsletterId }: { newsletterId: string }) {
+export default function Subscribers({
+  newsletterId,
+  canEdit = true,
+}: {
+  newsletterId: string;
+  // Read-only admins can view and export, but not import (the only mutation here).
+  canEdit?: boolean;
+}) {
   const qc = useQueryClient();
   const base = `/api/newsletters/${newsletterId}/subscribers`;
   const [status, setStatus] = useState('');
@@ -98,18 +105,20 @@ export default function Subscribers({ newsletterId }: { newsletterId: string }) 
         >
           {exporting ? 'Exporting…' : 'Export CSV'}
         </button>
-        <label className="text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
-          Import CSV
-          <input
-            type="file"
-            accept=".csv,text/csv"
-            className="hidden"
-            onChange={(e) => {
-              const f = e.currentTarget.files?.[0];
-              if (f) upload.mutate(f);
-            }}
-          />
-        </label>
+        {canEdit && (
+          <label className="text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
+            Import CSV
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              className="hidden"
+              onChange={(e) => {
+                const f = e.currentTarget.files?.[0];
+                if (f) upload.mutate(f);
+              }}
+            />
+          </label>
+        )}
       </div>
 
       {importResult && (

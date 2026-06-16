@@ -21,6 +21,12 @@ export interface CampaignRow {
   // Per-newsletter sender resolved via the campaign's newsletter. NULL means
   // fall back to the global FROM_ADDRESS setting.
   from_address: string | null;
+  // The campaign's newsletter, used to resolve and personalise the footer.
+  newsletter_id: string;
+  newsletter_name: string | null;
+  // Per-newsletter footer; NULL/empty falls back to the DEFAULT_FOOTER_* settings.
+  footer_html: string | null;
+  footer_text: string | null;
 }
 
 export interface AttachmentRow {

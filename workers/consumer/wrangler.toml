@@ -6,6 +6,13 @@ compatibility_flags = ["nodejs_compat"]
 # Tunables (sending identity, size cap, warmup schedule, etc.) are no longer
 # declared here. They resolve from the D1 `settings` table, falling back to the
 # built-in defaults in shared/settings.ts (edit them there or via the console).
+#
+# Secret (set with `wrangler secret put CF_READ_API_TOKEN`): an account-scoped
+# token with "Account > Email > Read" (or broader read) so the consumer can
+# read the account's daily sending quota from the Cloudflare API once per UTC
+# day to drive the warmup daily cap. The account id comes from the
+# ACCESS_ACCOUNT_ID setting. If the secret or account id is missing the daily
+# cap falls back to WARMUP_FALLBACK_DAILY_CAP.
 
 [[d1_databases]]
 binding = "DB"

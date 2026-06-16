@@ -1,10 +1,23 @@
+import { EmailMessage } from 'cloudflare:email';
 import { verifyHmac } from '../../../shared/tracking';
+import { buildEmail } from '../../../shared/mime';
+import { loadSettings } from '../../../shared/settings';
 
 export interface Env {
   DB: D1Database;
   ARCHIVE: R2Bucket;
   LINK_SIGNING_KEY: string;
   ATTACHMENT_SIGNING_KEY: string;
+  // Public signup: SEND_EMAIL delivers the double opt-in confirmation;
+  // TURNSTILE_SECRET_KEY validates the widget token. Both optional — without
+  // them the public subscribe page reports itself unavailable.
+  SEND_EMAIL?: { send(message: EmailMessage): Promise<void> };
+  TURNSTILE_SECRET_KEY?: string;
+  // Resolved from the D1 `settings` table at runtime (see loadSettings).
+  FROM_ADDRESS?: string;
+  BASE_DOMAIN?: string;
+  TRACKING_BASE_URL?: string;
+  TURNSTILE_SITE_KEY?: string;
 }
 
 const TRANSPARENT_GIF = new Uint8Array([
@@ -99,9 +112,291 @@ export default {
       }
     }
 
+    // GET /subscribe/:slug (form)  POST /subscribe/:slug (double opt-in)
+    if (parts[0] === 'subscribe' && parts.length === 2) {
+      return handleSubscribe(req, env, ctx, decodeURIComponent(parts[1]!));
+    }
+
+    // GET /verify/:sub?t=<confirm_token>  (double opt-in confirmation)
+    if (req.method === 'GET' && parts[0] === 'verify' && parts.length === 2) {
+      return handleVerify(env, Number(parts[1]!), url.searchParams.get('t') ?? '');
+    }
+
     return new Response('not found', { status: 404 });
   },
 };
+
+// ---- public double opt-in signup ----
+
+interface NewsletterRow {
+  id: string;
+  name: string;
+  from_address: string | null;
+  allow_public_signup: number;
+  enabled: number;
+}
+
+// Looks up a newsletter eligible for public signup (exists, enabled and
+// allow_public_signup=1). Returns null when not eligible so callers render a
+// generic 404 without leaking which slugs exist.
+async function findSignupNewsletter(env: Env, slug: string): Promise<NewsletterRow | null> {
+  if (!slug) return null;
+  const row = await env.DB
+    .prepare(
+      'SELECT id, name, from_address, allow_public_signup, enabled FROM newsletters WHERE slug = ?',
+    )
+    .bind(slug)
+    .first<NewsletterRow>();
+  if (!row || row.allow_public_signup !== 1 || row.enabled !== 1) return null;
+  return row;
+}
+
+async function handleSubscribe(
+  req: Request,
+  env: Env,
+  ctx: ExecutionContext,
+  slug: string,
+): Promise<Response> {
+  const cfg = await loadSettings(env.DB, env);
+  const siteKey = cfg.TURNSTILE_SITE_KEY ?? '';
+  const nl = await findSignupNewsletter(env, slug);
+  if (!nl) return htmlResponse(pageShell('Not found', '<p>This subscription page is not available.</p>'), 404);
+
+  // Signup requires Turnstile to be fully configured (site key + secret).
+  if (!siteKey || !env.TURNSTILE_SECRET_KEY || !env.SEND_EMAIL) {
+    return htmlResponse(
+      pageShell(
+        'Signup unavailable',
+        '<p>Public signup is not configured for this newsletter yet. Please check back later.</p>',
+      ),
+      503,
+    );
+  }
+
+  if (req.method === 'GET') {
+    return htmlResponse(subscribeForm(slug, nl.name, siteKey, null));
+  }
+
+  if (req.method === 'POST') {
+    const form = await req.formData().catch(() => null);
+    const email = String(form?.get('email') ?? '').trim().toLowerCase();
+    const name = String(form?.get('name') ?? '').trim();
+    const tsToken = String(form?.get('cf-turnstile-response') ?? '');
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      return htmlResponse(subscribeForm(slug, nl.name, siteKey, 'Please enter a valid email address.'), 400);
+    }
+    const human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, tsToken, req.headers.get('cf-connecting-ip'));
+    if (!human) {
+      return htmlResponse(subscribeForm(slug, nl.name, siteKey, 'Verification failed. Please try again.'), 400);
+    }
+
+    // Decide whether to (re)send a confirmation. An already-confirmed active
+    // subscriber (confirm_token IS NULL) is left untouched — we still show the
+    // neutral "check your inbox" page so the response can't be used to probe
+    // who is subscribed.
+    const existing = await env.DB
+      .prepare('SELECT id, status, confirm_token FROM subscribers WHERE newsletter_id = ? AND email = ?')
+      .bind(nl.id, email)
+      .first<{ id: number; status: string; confirm_token: string | null }>();
+
+    if (!(existing && existing.status === 'active' && existing.confirm_token === null)) {
+      const confirmToken = crypto.randomUUID();
+      const unsubToken = crypto.randomUUID();
+      // Upsert as PENDING: confirm_token is set, so iterateActiveSubscribers
+      // skips this row until the email is confirmed. A fresh unsubscribe token
+      // is only assigned for brand-new rows (keep the existing one otherwise).
+      const res = await env.DB
+        .prepare(
+          'INSERT INTO subscribers (newsletter_id, email, name, verified, status, token, confirm_token) ' +
+            "VALUES (?, ?, ?, 0, 'active', ?, ?) " +
+            'ON CONFLICT(newsletter_id, email) DO UPDATE SET ' +
+            'confirm_token = excluded.confirm_token, ' +
+            'name = COALESCE(NULLIF(excluded.name, ?), subscribers.name)',
+        )
+        .bind(nl.id, email, name || null, unsubToken, confirmToken, '')
+        .run();
+      void res;
+      const row = await env.DB
+        .prepare('SELECT id FROM subscribers WHERE newsletter_id = ? AND email = ?')
+        .bind(nl.id, email)
+        .first<{ id: number }>();
+      if (row) {
+        const base = (cfg.TRACKING_BASE_URL ?? '').replace(/\/+$/, '');
+        const verifyUrl = `${base}/verify/${row.id}?t=${encodeURIComponent(confirmToken)}`;
+        ctx.waitUntil(sendConfirmationEmail(env, cfg, nl, email, name, verifyUrl));
+      }
+    }
+
+    return htmlResponse(
+      pageShell(
+        'Almost there',
+        `<p>Thanks! We've sent a confirmation link to <strong>${escapeHtml(email)}</strong>.</p>` +
+          '<p>Please open that email and click the link to complete your subscription. ' +
+          "If you don't see it, check your spam folder.</p>",
+      ),
+    );
+  }
+
+  return new Response('method not allowed', { status: 405 });
+}
+
+async function handleVerify(env: Env, sub: number, token: string): Promise<Response> {
+  if (!Number.isFinite(sub) || !token) {
+    return htmlResponse(pageShell('Invalid link', '<p>This confirmation link is invalid.</p>'), 400);
+  }
+  const row = await env.DB
+    .prepare('SELECT confirm_token FROM subscribers WHERE id = ?')
+    .bind(sub)
+    .first<{ confirm_token: string | null }>();
+  if (!row) {
+    return htmlResponse(pageShell('Invalid link', '<p>This confirmation link is invalid.</p>'), 400);
+  }
+  // Already confirmed (token cleared): treat as success so a re-click is benign.
+  if (row.confirm_token === null) {
+    return htmlResponse(pageShell('Already confirmed', '<p>Your subscription is already confirmed. Thank you!</p>'));
+  }
+  if (row.confirm_token !== token) {
+    return htmlResponse(pageShell('Invalid link', '<p>This confirmation link is invalid or has expired.</p>'), 403);
+  }
+  // Confirm: clear the pending token, mark verified and (re)activate — this also
+  // handles resubscribing a previously unsubscribed/bounced address.
+  await env.DB
+    .prepare(
+      "UPDATE subscribers SET verified = 1, status = 'active', confirm_token = NULL, " +
+        "unsubscribed_at = NULL, subscribed_at = datetime('now') WHERE id = ?",
+    )
+    .bind(sub)
+    .run();
+  return htmlResponse(
+    pageShell('Subscription confirmed', '<p>You\u2019re all set \u2014 thanks for subscribing!</p>'),
+  );
+}
+
+// Verifies a Turnstile token against the siteverify endpoint. Returns true only
+// on an explicit success; any error or non-200 is treated as failure.
+async function verifyTurnstile(secret: string, token: string, ip: string | null): Promise<boolean> {
+  if (!token) return false;
+  try {
+    const body = new FormData();
+    body.set('secret', secret);
+    body.set('response', token);
+    if (ip) body.set('remoteip', ip);
+    const res = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      body,
+    });
+    const data = (await res.json().catch(() => ({}))) as { success?: boolean };
+    return data.success === true;
+  } catch {
+    return false;
+  }
+}
+
+async function sendConfirmationEmail(
+  env: Env,
+  cfg: Env,
+  nl: NewsletterRow,
+  email: string,
+  name: string,
+  verifyUrl: string,
+): Promise<void> {
+  if (!env.SEND_EMAIL) return;
+  const fromHeader = nl.from_address || cfg.FROM_ADDRESS || `newsletter@${cfg.BASE_DOMAIN ?? ''}`;
+  const fromAddr = extractAddr(fromHeader);
+  const messageId = `${crypto.randomUUID()}@${cfg.BASE_DOMAIN ?? 'localhost'}`;
+  const subject = `Confirm your subscription to ${nl.name}`;
+  const safeName = escapeHtml(nl.name);
+  const html =
+    `<div style="font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;max-width:480px;margin:0 auto;color:#0f172a">` +
+    `<h1 style="font-size:18px">Confirm your subscription</h1>` +
+    `<p>Please confirm that you want to receive <strong>${safeName}</strong> at this address.</p>` +
+    `<p style="margin:24px 0"><a href="${verifyUrl}" style="background:#0f172a;color:#fff;text-decoration:none;padding:10px 18px;border-radius:6px;display:inline-block">Confirm subscription</a></p>` +
+    `<p style="font-size:13px;color:#64748b">Or paste this link into your browser:<br><a href="${verifyUrl}" style="color:#2563eb">${verifyUrl}</a></p>` +
+    `<p style="font-size:12px;color:#94a3b8">If you didn't request this, you can safely ignore this email \u2014 no subscription is created until you confirm.</p>` +
+    `</div>`;
+  const text =
+    `Confirm your subscription to ${nl.name}\n\n` +
+    `Please confirm you want to receive ${nl.name} at this address by opening:\n${verifyUrl}\n\n` +
+    `If you didn't request this, ignore this email — no subscription is created until you confirm.`;
+  const raw = buildEmail({
+    from: fromHeader,
+    to: name ? `${quoteName(name)} <${email}>` : email,
+    subject,
+    messageId,
+    text,
+    html,
+    attachments: [],
+    headers: { 'X-Entity-Ref-ID': messageId },
+  });
+  await env.SEND_EMAIL.send(new EmailMessage(fromAddr, email, raw));
+}
+
+function extractAddr(header: string): string {
+  const m = header.match(/<([^>]+)>/);
+  return m?.[1] ?? header.trim();
+}
+
+function quoteName(name: string): string {
+  return /[",<>]/.test(name) ? `"${name.replace(/"/g, '\\"')}"` : name;
+}
+
+function htmlResponse(body: string, status = 200): Response {
+  return new Response(body, { status, headers: { 'Content-Type': 'text/html; charset=utf-8' } });
+}
+
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+// Minimal branded page wrapper shared by the status/result pages.
+function pageShell(title: string, bodyHtml: string): string {
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>${escapeHtml(title)}</title>${PAGE_CSS}</head>` +
+    `<body><main class="card"><h1>${escapeHtml(title)}</h1>${bodyHtml}</main></body></html>`;
+}
+
+function subscribeForm(slug: string, newsletterName: string, siteKey: string, error: string | null): string {
+  const name = escapeHtml(newsletterName);
+  const err = error ? `<p class="err">${escapeHtml(error)}</p>` : '';
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+    `<meta name="viewport" content="width=device-width,initial-scale=1">` +
+    `<title>Subscribe to ${name}</title>${PAGE_CSS}` +
+    `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script></head>` +
+    `<body><main class="card"><h1>Subscribe to ${name}</h1>` +
+    `<p class="muted">Enter your details and we'll send a confirmation link.</p>${err}` +
+    `<form method="post" action="/subscribe/${encodeURIComponent(slug)}">` +
+    `<label>Email<input type="email" name="email" required autocomplete="email" placeholder="you@example.com"></label>` +
+    `<label>Name <span class="opt">(optional)</span><input type="text" name="name" autocomplete="name"></label>` +
+    `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>` +
+    `<button type="submit">Subscribe</button>` +
+    `</form></main></body></html>`;
+}
+
+const PAGE_CSS =
+  '<style>' +
+  ':root{color-scheme:light dark}' +
+  '*{box-sizing:border-box}' +
+  'body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#f1f5f9;' +
+  'font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif;color:#0f172a;padding:16px}' +
+  '.card{background:#fff;border:1px solid #e2e8f0;border-radius:12px;padding:28px;max-width:380px;width:100%;' +
+  'box-shadow:0 1px 3px rgba(0,0,0,.06)}' +
+  'h1{font-size:20px;margin:0 0 12px}' +
+  '.muted{color:#64748b;font-size:14px;margin:0 0 16px}' +
+  '.opt{color:#94a3b8;font-weight:400}' +
+  'label{display:block;font-size:13px;font-weight:600;margin-bottom:12px}' +
+  'input{display:block;width:100%;margin-top:4px;padding:9px 10px;border:1px solid #cbd5e1;border-radius:6px;' +
+  'font-size:14px;font-weight:400}' +
+  'button{width:100%;margin-top:8px;padding:10px;border:0;border-radius:6px;background:#0f172a;color:#fff;' +
+  'font-size:14px;font-weight:600;cursor:pointer}' +
+  '.cf-turnstile{margin:4px 0 12px}' +
+  '.err{color:#dc2626;font-size:13px;margin:0 0 12px}' +
+  'a{color:#2563eb}' +
+  '@media(prefers-color-scheme:dark){body{background:#0f172a;color:#e2e8f0}' +
+  '.card{background:#1e293b;border-color:#334155}.muted{color:#94a3b8}' +
+  'input{background:#0f172a;border-color:#334155;color:#e2e8f0}button{background:#e2e8f0;color:#0f172a}}' +
+  '</style>';
 
 // Returns the raw (still URL-encoded) value of a query parameter, exactly as it
 // appears in the query string. Unlike URLSearchParams.get(), this does not

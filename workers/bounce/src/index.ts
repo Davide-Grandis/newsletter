@@ -12,8 +12,33 @@ export default {
   async email(message: ForwardableEmailMessage, rawEnv: Env, _ctx: ExecutionContext): Promise<void> {
     // Resolve tunables (bounce thresholds) against the D1 `settings` table.
     const env = await loadSettings(rawEnv.DB, rawEnv);
-    // VERP: bounce+<campaignId>.<subscriberId>@domain
     const to = (message.to ?? '').toLowerCase();
+
+    // RFC 8058 mailto unsubscribe: unsubscribe+<subscriberId>@<domain>. The
+    // consumer advertises this in List-Unsubscribe; it lands here because the
+    // bounce worker is the catch-all inbound route. The sender's own mail
+    // provider is the proof of intent (a mailto carries no token), matching
+    // standard one-click-by-email behaviour.
+    const unsub = /unsubscribe\+(\d+)@/.exec(to);
+    if (unsub) {
+      const sub = Number(unsub[1]);
+      const res = await env.DB
+        .prepare(
+          "UPDATE subscribers SET status='unsubscribed', unsubscribed_at=datetime('now') " +
+            "WHERE id = ? AND status='active'",
+        )
+        .bind(sub)
+        .run();
+      if (res.meta?.changes) {
+        await env.DB
+          .prepare("INSERT INTO events (campaign_id, subscriber_id, type) VALUES (NULL, ?, 'unsubscribe')")
+          .bind(sub)
+          .run();
+      }
+      return;
+    }
+
+    // VERP: bounce+<campaignId>.<subscriberId>@domain
     const verp = /bounce\+([^.@]+)\.(\d+)@/.exec(to);
     const campaignId = verp?.[1] ?? null;
     const subscriberId = verp ? Number(verp[2]) : null;

@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, ApiError, Setting } from '../api';
+import { api, ApiError, Setting, EmailSendingStats } from '../api';
+import { useIdentity } from '../auth';
+import SuperAdmins from './SuperAdmins';
 
 type FieldType = 'text' | 'number' | 'textarea' | 'boolean';
 
@@ -9,11 +11,30 @@ interface FieldMeta {
   label: string;
   help: string;
   type?: FieldType;
+  // Hide the default/overridden/editing source badge (e.g. settings that have
+  // no built-in default, like the Access IDs).
+  hideSource?: boolean;
+  // Render the source badge below the input instead of beside the label.
+  sourceBelow?: boolean;
+  // Populate the field from a dynamic option source (a pick-list) rather than
+  // free text. 'sending-domains' = the account's Cloudflare zones (Email
+  // Routing-enabled only); 'workers' = the account's Worker scripts.
+  optionsFrom?: 'sending-domains' | 'workers';
+  // Hide the raw setting key shown under the help text (user-facing settings
+  // where the internal variable name is just noise).
+  hideKey?: boolean;
+  // Rows for a 'textarea' field (defaults to 2).
+  rows?: number;
+  // Render the input one step smaller (text-xs instead of text-sm).
+  compact?: boolean;
 }
 
 interface Section {
   title: string;
   description: string;
+  // Optional longer-form guidance rendered as a callout above the fields.
+  // Newlines are preserved, so it can hold multi-step instructions.
+  note?: string;
   fields: FieldMeta[];
 }
 
@@ -28,25 +49,71 @@ interface Tab {
 // Sections are grouped into a small number of tabs to keep the page scannable.
 const TABS: Tab[] = [
   {
+    id: 'access',
+    label: 'Access',
+    sections: [
+  {
+    title: 'Console access (Cloudflare Access)',
+    description:
+      'Who can sign in to this console is enforced by Cloudflare Access at the edge, using a Zero Trust Emails list.',
+    note:
+      'Required one-time setup in the Zero Trust dashboard (the worker never creates these; it only edits list membership):\n\n' +
+      '1. Emails list — under My Team \u2192 Lists, create a list of type "Emails". The account that owns it is the Account ID below; the list\u2019s own ID is the List ID below. Do not edit its members by hand — the Users page drives them.\n\n' +
+      '2. Access application — a self-hosted application protecting this console\u2019s hostname.\n\n' +
+      '3. Access policy — on that application, a single policy with action Allow and exactly one Include rule of type "Emails list" pointing at the list above. No other rules are needed; membership is controlled entirely from the Users page.\n\n' +
+      'API token — stored as the Worker secret CF_ZT_API_TOKEN (not shown here). Least privilege: Account \u2192 Zero Trust \u2192 Edit, restricted to this account only. It must be an account-owned token whose account matches the Account ID below.\n\n' +
+      'The two parameters below are mandatory — please check them with your Cloudflare admin team.',
+    fields: [
+      { key: 'ACCESS_ACCOUNT_ID', label: 'Account ID', help: 'Cloudflare account that owns the Zero Trust Emails list (lists are account-scoped). Must match the account the CF_ZT_API_TOKEN secret is scoped to.', hideSource: true, hideKey: true },
+      { key: 'ACCESS_LIST_ID', label: 'Emails list ID', help: 'ID of the Zero Trust "Emails" list referenced by the Access policy. The worker appends/removes member emails as console users are added or removed. Leave empty to disable automatic sync (you then maintain the list by hand).', hideSource: true, hideKey: true },
+    ],
+  },
+    ],
+  },
+  {
+    // Rendered by a dedicated component (no settings fields). See render below.
+    id: 'superadmins',
+    label: 'Super admins',
+    sections: [],
+  },
+  {
+    id: 'permissions',
+    label: 'Admin permissions',
+    sections: [
+  {
+    title: 'Admin permissions',
+    description:
+      'Optional permission for regular admins (super admins always have it). Off by default. Whether an admin can change things is otherwise controlled per-admin by their read-only/edit access, set on each newsletter\u2019s Admins tab.',
+    fields: [
+      { key: 'ALLOW_ADMIN_NEWSLETTER_CRUD', label: 'Admins can create/delete newsletters', help: 'When on, edit-capable admins (not just super admins) may create newsletters (they are auto-assigned to ones they create) and delete newsletters they are assigned to.', type: 'boolean', hideKey: true },
+    ],
+  },
+    ],
+  },
+  {
     id: 'sending',
-    label: 'Sending',
+    label: 'Email sending',
     sections: [
   {
     title: 'Deployment & routing',
     description:
       'Identifiers the admin worker uses to keep Email Routing rules in sync. Changing these takes effect immediately for new newsletter operations.',
+    note:
+      'One-time setup: enable Email Routing “Subaddressing” for the sending domain in the Cloudflare dashboard (Compute → Email Service → Email Routing → Settings). It cannot be toggled via API. It lets the auto-created bounce@<domain> rule capture VERP bounce addresses (bounce+<id>@<domain>); without it, bounce handling will not work.',
     fields: [
-      { key: 'EMAIL_ROUTING_ZONE_ID', label: 'Email Routing zone ID', help: 'Used to auto-manage Email Routing rules (each newsletter\u2019s inbound address \u2192 ingest worker). If unset, add the routing rules manually.' },
-      { key: 'INGEST_WORKER_NAME', label: 'Ingest worker name', help: 'Worker script that Email Routing rules forward inbound mail to.' },
-      { key: 'BASE_DOMAIN', label: 'Base domain', help: 'Domain newsletters receive mail on (e.g. example.com). Used for inbound-address hints.' },
+      { key: 'BASE_DOMAIN', label: 'Sending domain', help: 'The Cloudflare domain name for the Email Sending service. It represents the domain for used for sending and receiving emails.', hideKey: true, hideSource: true, optionsFrom: 'sending-domains' },
+      { key: 'INGEST_WORKER_NAME', label: 'Ingest worker name', help: 'Worker script that Email Routing rules forward inbound mail to. Pick from the Workers in this account.', hideKey: true, sourceBelow: true, optionsFrom: 'workers' },
     ],
   },
   {
-    title: 'Sending identity',
-    description: 'How outbound mail is addressed and where engagement is tracked.',
+    title: 'Default footer',
+    description:
+      'Appended to every outgoing email unless a newsletter defines its own footer (set on the newsletter\u2019s page). The HTML is sanitized to a safe allow-list when saved.',
+    note:
+      'Tokens you can use: {{unsubscribe_url}}, {{newsletter_name}}, {{email}}. An unsubscribe link is always included even if you omit the token.',
     fields: [
-      { key: 'BOUNCE_DOMAIN', label: 'Bounce domain', help: 'Domain used for VERP bounce return-path addresses (bounce+<id>@domain).' },
-      { key: 'TRACKING_BASE_URL', label: 'Tracking base URL', help: 'Base URL of the tracker worker for opens, clicks, unsubscribe and downloads.' },
+      { key: 'DEFAULT_FOOTER_HTML', label: 'HTML footer', help: 'HTML appended to the end of every email body (after tracking instrumentation, so its links are not click-tracked).', type: 'textarea', hideKey: true, rows: 6, compact: true },
+      { key: 'DEFAULT_FOOTER_TEXT', label: 'Plain-text footer', help: 'Footer appended to the plain-text part of every email.', type: 'textarea', hideKey: true, rows: 6, compact: true },
     ],
   },
     ],
@@ -79,7 +146,7 @@ const TABS: Tab[] = [
   },
   {
     id: 'tracking',
-    label: 'Tracking',
+    label: 'Tracking & signup',
     sections: [
   {
     title: 'Tracking',
@@ -87,6 +154,15 @@ const TABS: Tab[] = [
       'Open and click tracking transforms outgoing HTML: every link is rewritten to a signed redirect through the tracker worker, and an invisible 1×1 pixel is appended to detect opens. Disable to send links unmodified and omit the pixel — opens and clicks will then not be recorded. Large-attachment download links are unaffected, since they deliver the files themselves.',
     fields: [
       { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added. When off, recipients get your original links and no pixel; the Analytics page will show no opens/clicks for new sends.', type: 'boolean' },
+      { key: 'TRACKING_BASE_URL', label: 'Tracking base URL', help: 'Base URL of the tracker worker for opens, clicks, unsubscribe and downloads.', hideKey: true },
+    ],
+  },
+  {
+    title: 'Public signup',
+    description:
+      'Cloudflare Turnstile protects the public subscribe page (enabled per newsletter on its Signup tab) from bots. Create a Turnstile widget for this domain, paste its site key here, and set the matching secret on the tracker worker (wrangler secret put TURNSTILE_SECRET_KEY). Empty disables the public signup page.',
+    fields: [
+      { key: 'TURNSTILE_SITE_KEY', label: 'Turnstile site key', help: 'Public site key of the Turnstile widget. The secret key is a tracker-worker secret, not a setting.', hideKey: true },
     ],
   },
     ],
@@ -105,14 +181,12 @@ const TABS: Tab[] = [
   },
   {
     title: 'Warmup',
-    description: 'IP/domain warmup caps applied by the consumer worker. Leave the start date empty to disable caps entirely.',
+    description:
+      'IP/domain warmup is always on and demand-driven (no start date). The sender enters week 0 the first time there are more than 499 emails to send, then advances one weekly step at a time, only when the backlog grows to the next step. The daily cap is read live from the Cloudflare API; the values below are informative and shown under "Sending usage" above.',
     fields: [
-      { key: 'WARMUP_START_DATE', label: 'Warmup start date', help: 'YYYY-MM-DD. Empty disables all caps.' },
-      { key: 'WARMUP_TARGET_WEEKLY', label: 'Target weekly volume', help: 'Steady-state weekly send ceiling once warmup completes.', type: 'number' },
-      { key: 'WARMUP_SCHEDULE', label: 'Weekly schedule (JSON)', help: 'JSON array of weekly caps stepped through during warmup, e.g. [500, 1500, 5000].', type: 'textarea' },
-      { key: 'WARMUP_DAILY_CAP_EARLY', label: 'Daily cap (early weeks)', help: 'Daily cap before the late-start week.', type: 'number' },
-      { key: 'WARMUP_DAILY_CAP_LATE', label: 'Daily cap (late weeks)', help: 'Daily cap from the late-start week onward.', type: 'number' },
-      { key: 'WARMUP_LATE_START_WEEK', label: 'Late-start week', help: 'Week index at which the late daily cap begins to apply.', type: 'number' },
+      { key: 'WARMUP_TARGET_WEEKLY', label: 'Target weekly volume', help: 'Steady-state weekly send ceiling once the schedule is exhausted.', type: 'number' },
+      { key: 'WARMUP_SCHEDULE', label: 'Weekly schedule (JSON)', help: 'JSON array of weekly caps stepped through during warmup, e.g. [500, 1500, 5000, 12000, 25000, 40000]. Each value is also the demand threshold to enter that week.', type: 'textarea' },
+      { key: 'WARMUP_FALLBACK_DAILY_CAP', label: 'Fallback daily cap', help: 'Daily cap used only when the live Cloudflare daily quota cannot be read.', type: 'number' },
     ],
   },
     ],
@@ -152,13 +226,49 @@ export default function Settings() {
   const [draft, setDraft] = useState('');
   const [fieldError, setFieldError] = useState<string | null>(null);
   const [savedKey, setSavedKey] = useState<string | null>(null);
+  // Best-effort warning returned after saving the sending domain (e.g. the
+  // bounce Email Routing rule could not be created automatically).
+  const [saveWarn, setSaveWarn] = useState<string | null>(null);
   const [tab, setTab] = useState<string>(TABS[0]!.id);
 
   const activeTab = TABS.find((t) => t.id === tab) ?? TABS[0]!;
 
+  const me = useIdentity();
+  const isSuper = me.data?.role === 'super_admin';
+
+  // Real Email Sending usage for the configured Sending domain, read live from
+  // Cloudflare (daily quota + emails sent). Only fetched on the Email sending
+  // tab; super-admin only (the endpoint is gated too).
+  const sending = useQuery({
+    queryKey: ['email-sending-stats'],
+    queryFn: () => api<EmailSendingStats>('/api/email-sending-stats'),
+    enabled: isSuper && activeTab.id === 'sending',
+    staleTime: 60_000,
+  });
+
   const query = useQuery({
     queryKey: ['settings'],
     queryFn: () => api<{ settings: Setting[] }>('/api/settings'),
+  });
+
+  // Account domains (Cloudflare zones) backing the sending-domain pick-list,
+  // each annotated with its Email Routing status when the read token allows it.
+  const domains = useQuery({
+    queryKey: ['sending-domains'],
+    queryFn: () =>
+      api<{
+        items: { name: string; routing: 'enabled' | 'disabled' | 'unknown' }[];
+        error?: string;
+        routing_checkable?: boolean;
+      }>('/api/sending-domains'),
+    staleTime: 5 * 60_000,
+  });
+
+  // Account Worker scripts backing the ingest-worker pick-list.
+  const workers = useQuery({
+    queryKey: ['account-workers'],
+    queryFn: () => api<{ items: string[]; error?: string }>('/api/workers'),
+    staleTime: 5 * 60_000,
   });
 
   // Effective values keyed by setting key, from the server.
@@ -173,16 +283,21 @@ export default function Settings() {
 
   const save = useMutation({
     mutationFn: (updates: Record<string, string | null>) =>
-      api('/api/settings', { method: 'PUT', body: JSON.stringify({ updates }) }),
-    onSuccess: async (_data, updates) => {
+      api<{ routing_warning?: string }>('/api/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ updates }),
+      }),
+    onSuccess: async (data, updates) => {
       const key = Object.keys(updates)[0] ?? null;
       setEditKey(null);
       setFieldError(null);
       setSavedKey(key);
+      // Domain-level bounce-rule sync warning (best-effort), if any.
+      setSaveWarn(data?.routing_warning ?? null);
       setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 2500);
       await qc.invalidateQueries({ queryKey: ['settings'] });
-      // Quota depends on warmup settings; refresh it too.
-      await qc.invalidateQueries({ queryKey: ['quota'] });
+      // Warmup display depends on these settings; refresh it too.
+      await qc.invalidateQueries({ queryKey: ['email-sending-stats'] });
     },
     onError: (e, updates) => {
       const key = Object.keys(updates)[0] ?? '';
@@ -205,7 +320,10 @@ export default function Settings() {
 
   function saveField(key: string) {
     if (!changed) return cancelEdit();
-    save.mutate({ [key]: draft });
+    // Selecting/typing the built-in default is not an override: clear the stored
+    // value (same as Reset) so the source reverts to “default” instead of “db”.
+    const fallback = byKey.get(key)?.fallback ?? '';
+    save.mutate({ [key]: draft === fallback && fallback !== '' ? null : draft });
   }
 
   function resetField(key: string) {
@@ -245,6 +363,23 @@ export default function Settings() {
         ))}
       </div>
 
+      {activeTab.id === 'superadmins' && <SuperAdmins />}
+
+      {saveWarn && (
+        <div className="flex items-start gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-900/20 dark:text-amber-200">
+          <span className="flex-1">{saveWarn}</span>
+          <button
+            type="button"
+            onClick={() => setSaveWarn(null)}
+            className="text-amber-700 hover:text-amber-900 dark:text-amber-300 dark:hover:text-amber-100"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      {activeTab.id === 'sending' && <EmailSendingUsage q={sending} />}
+
       {activeTab.sections.map((section) => (
         <section
           key={section.title}
@@ -253,6 +388,11 @@ export default function Settings() {
           <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 dark:bg-slate-800/60 dark:border-slate-700">
             <h2 className="text-base font-medium">{section.title}</h2>
             <p className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">{section.description}</p>
+            {section.note && (
+              <div className="mt-2 rounded border border-sky-200 bg-sky-50 p-2.5 text-xs leading-relaxed text-sky-900 whitespace-pre-line dark:border-sky-900/60 dark:bg-sky-900/20 dark:text-sky-200">
+                {section.note}
+              </div>
+            )}
           </div>
           <div className="divide-y divide-slate-100 dark:divide-slate-800">
             {section.fields.map((f) => {
@@ -262,7 +402,9 @@ export default function Settings() {
               const bytes =
                 f.type === 'number' && f.key.endsWith('_BYTES') ? formatBytes(shownValue) : null;
               const locked = !editing;
-              const inputClass = `${inputCls}${f.type === 'textarea' ? ' font-mono' : ''} ${
+              const inputClass = `${f.compact ? inputCls.replace('text-sm', 'text-xs') : inputCls}${
+                f.type === 'textarea' ? ' font-mono' : ''
+              } ${
                 locked
                   ? 'bg-slate-50 text-slate-500 cursor-not-allowed dark:bg-slate-800/40 dark:text-slate-400'
                   : ''
@@ -275,28 +417,90 @@ export default function Settings() {
                   <div className="min-w-0">
                     <label htmlFor={f.key} className="text-sm font-medium flex items-center gap-2 flex-wrap">
                       {f.label}
-                      {s && <SourceBadge source={s.source} editing={editing} />}
+                      {/* Booleans show the badge beside their value instead; some
+                          fields (no default) hide it entirely. */}
+                      {s && !f.hideSource && !f.sourceBelow && f.type !== 'boolean' && (
+                        <SourceBadge source={s.source} editing={editing} />
+                      )}
                     </label>
                     <p className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">{f.help}</p>
-                    <p className="text-[11px] text-slate-400 mt-0.5 font-mono dark:text-slate-500">{f.key}</p>
+                    {!f.hideKey && (
+                      <p className="text-[11px] text-slate-400 mt-0.5 font-mono dark:text-slate-500">{f.key}</p>
+                    )}
                   </div>
 
                   <div className="min-w-0">
                     {f.type === 'boolean' ? (
-                      <Toggle
-                        checked={shownValue === 'true'}
-                        disabled={save.isPending || editKey !== null}
-                        onChange={(next) => save.mutate({ [f.key]: next ? 'true' : 'false' })}
-                      />
+                      <div className="flex items-center gap-2">
+                        <Toggle
+                          checked={shownValue === 'true'}
+                          disabled={save.isPending || editKey !== null}
+                          onChange={(next) => save.mutate({ [f.key]: next ? 'true' : 'false' })}
+                        />
+                        {s && !f.hideSource && <SourceBadge source={s.source} editing={false} />}
+                      </div>
                     ) : f.type === 'textarea' ? (
                       <textarea
                         id={f.key}
-                        rows={2}
+                        rows={f.rows ?? 2}
                         value={shownValue}
                         readOnly={locked}
                         onChange={(e) => setDraft(e.target.value)}
                         className={inputClass}
                       />
+                    ) : f.optionsFrom ? (
+                      locked ? (
+                        // When not editing, show the value as a read-only input so
+                        // it matches every other setting (same font colour); a
+                        // disabled <select> would render washed-out.
+                        <input
+                          id={f.key}
+                          type="text"
+                          value={shownValue}
+                          readOnly
+                          className={inputClass}
+                        />
+                      ) : (
+                        (() => {
+                          const isDomains = f.optionsFrom === 'sending-domains';
+                          // Domains: only Email Routing-enabled zones. Workers: all
+                          // account Worker scripts.
+                          const names = isDomains
+                            ? (domains.data?.items ?? [])
+                                .filter((i) => i.routing === 'enabled')
+                                .map((i) => i.name)
+                            : workers.data?.items ?? [];
+                          return (
+                            <select
+                              id={f.key}
+                              value={shownValue}
+                              onChange={(e) => {
+                                setDraft(e.target.value);
+                                setFieldError(null);
+                              }}
+                              className={inputClass}
+                            >
+                              {/* Domains use an unselectable placeholder for the
+                                  not-yet-set case; workers always have a value. */}
+                              {isDomains && (
+                                <option value="" disabled>
+                                  Select a domain…
+                                </option>
+                              )}
+                              {names.map((n) => (
+                                <option key={n} value={n}>
+                                  {n}
+                                </option>
+                              ))}
+                              {/* Keep the current value selectable if it isn't in the
+                                  fetched list (still loading, or no longer present). */}
+                              {shownValue !== '' && !names.includes(shownValue) && (
+                                <option value={shownValue}>{shownValue}</option>
+                              )}
+                            </select>
+                          );
+                        })()
+                      )
                     ) : (
                       <input
                         id={f.key}
@@ -309,7 +513,10 @@ export default function Settings() {
                     )}
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                       {bytes && <span>{bytes}</span>}
-                      {s && s.source === 'db' && f.type !== 'boolean' && (
+                      {s && !f.hideSource && f.sourceBelow && f.type !== 'boolean' && (
+                        <SourceBadge source={s.source} editing={editing} />
+                      )}
+                      {s && s.source === 'db' && f.type !== 'boolean' && !f.hideSource && (
                         <span>overrides default “{s.fallback || '∅'}”</span>
                       )}
                       {(editing || f.type === 'boolean') && fieldError && (
@@ -319,6 +526,44 @@ export default function Settings() {
                         <span className="text-emerald-600 dark:text-emerald-400">Saved.</span>
                       )}
                     </div>
+                    {editing &&
+                      f.optionsFrom &&
+                      (() => {
+                        const loading =
+                          f.optionsFrom === 'sending-domains' ? domains.isLoading : workers.isLoading;
+                        if (loading) {
+                          return (
+                            <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                              {f.optionsFrom === 'workers' ? 'Loading workers…' : 'Loading domains…'}
+                            </p>
+                          );
+                        }
+                        let msg: string | null = null;
+                        if (f.optionsFrom === 'sending-domains') {
+                          const enabled = (domains.data?.items ?? []).filter(
+                            (i) => i.routing === 'enabled',
+                          );
+                          if (enabled.length === 0) {
+                            msg = domains.data?.error
+                              ? `Couldn’t load domains: ${domains.data.error}.`
+                              : domains.data?.routing_checkable === false
+                                ? 'Couldn’t read Email Routing status — the read API token needs account “Read all resources” scope.'
+                                : 'No domains have Email Routing enabled. Enable Email Routing on a domain in the Cloudflare dashboard, then reopen this field.';
+                          }
+                        } else {
+                          const items = workers.data?.items ?? [];
+                          if (items.length === 0) {
+                            msg = workers.data?.error
+                              ? `Couldn’t load workers: ${workers.data.error}.`
+                              : 'No Workers found in this account.';
+                          }
+                        }
+                        return msg ? (
+                          <p className="mt-1.5 text-[11px] leading-relaxed text-red-600 dark:text-red-400">
+                            {msg}
+                          </p>
+                        ) : null;
+                      })()}
                   </div>
 
                   <div className="flex items-center gap-2 justify-start sm:justify-end">
@@ -363,7 +608,7 @@ export default function Settings() {
                         >
                           Edit
                         </button>
-                        {s && s.source === 'db' && (
+                        {s && s.source === 'db' && !f.hideSource && (
                           <button
                             type="button"
                             onClick={() => resetField(f.key)}
@@ -408,6 +653,187 @@ function TabButton({
     >
       {children}
     </button>
+  );
+}
+
+// Live Email Sending usage for the configured Sending domain, read from
+// Cloudflare: the account daily quota and the emails sent (last 30 days, this
+// zone). Read-only; degrades gracefully when a token scope or the domain is
+// missing.
+function EmailSendingUsage({
+  q,
+}: {
+  q: {
+    data?: EmailSendingStats;
+    isLoading: boolean;
+    isFetching: boolean;
+    error: unknown;
+    refetch: () => void;
+  };
+}) {
+  const s = q.data;
+  return (
+    <section className="border border-slate-200 rounded-lg dark:border-slate-700 overflow-hidden">
+      <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center justify-between dark:bg-slate-800/60 dark:border-slate-700">
+        <div>
+          <h2 className="text-base font-medium">Sending usage</h2>
+          <p className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">
+            Live from Cloudflare for the Sending domain
+            {s?.domain ? (
+              <>
+                {' '}
+                (<code className="bg-slate-100 px-1 rounded dark:bg-slate-800">{s.domain}</code>)
+              </>
+            ) : null}
+            .
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => q.refetch()}
+          disabled={q.isFetching}
+          className="text-xs rounded px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+        >
+          {q.isFetching ? 'Refreshing…' : 'Refresh'}
+        </button>
+      </div>
+      <div className="p-4">
+        {q.isLoading ? (
+          <div className="text-sm text-slate-500 dark:text-slate-400">Loading usage…</div>
+        ) : q.error ? (
+          <div className="text-sm text-red-600">{(q.error as Error).message}</div>
+        ) : !s ? null : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <UsageStat
+                label="Daily sending quota"
+                value={s.quota ? s.quota.value.toLocaleString() : '—'}
+                sub={
+                  s.quota
+                    ? `emails per ${s.quota.unit} (live from API)`
+                    : s.quota_error
+                      ? 'unavailable'
+                      : 'not yet assigned by Cloudflare'
+                }
+              />
+              <UsageStat
+                label="Emails sent (last 30 days)"
+                value={s.total.toLocaleString()}
+                sub={
+                  s.stats_error
+                    ? 'unavailable'
+                    : `${s.today.toLocaleString()} today · ${s.windowStart ?? ''} → ${s.windowEnd ?? ''}`
+                }
+              />
+              <UsageStat
+                label="Warmup week"
+                value={s.warmup.started ? `Week ${s.warmup.level}` : 'Not started'}
+                sub={
+                  s.warmup.started
+                    ? `weekly cap ${s.warmup.weeklyCap.toLocaleString()} · ${s.warmup.sentThisWeek.toLocaleString()} sent this week`
+                    : `starts when demand > 499 · backlog ${s.warmup.demand.toLocaleString()}`
+                }
+              />
+            </div>
+
+            <WarmupProgression w={s.warmup} apiDailyCap={s.quota?.value ?? null} />
+
+            {(s.quota_error || s.stats_error) && (
+              <div className="mt-3 text-xs text-amber-600 dark:text-amber-400 space-y-0.5">
+                {s.stats_error && <div>Sent counts unavailable: {s.stats_error}</div>}
+                {s.quota_error && <div>Quota unavailable: {s.quota_error}</div>}
+                <div className="text-slate-400 dark:text-slate-500">
+                  The read token (CF_READ_API_TOKEN) needs <strong>Analytics: Read</strong> for the
+                  sent counts and an account <strong>Email</strong> read scope for the quota.
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function UsageStat({ label, value, sub }: { label: string; value: string; sub?: string }) {
+  return (
+    <div className="bg-white rounded-lg border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+      <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
+      <div className="text-2xl font-semibold mt-1 tabular-nums">{value}</div>
+      {sub && <div className="text-xs text-slate-400 mt-0.5 dark:text-slate-500">{sub}</div>}
+    </div>
+  );
+}
+
+// Read-only view of the demand-driven warmup ramp: each weekly step, the live
+// daily cap from the API, and a marker on the week the sender is currently in.
+function WarmupProgression({
+  w,
+  apiDailyCap,
+}: {
+  w: EmailSendingStats['warmup'];
+  apiDailyCap: number | null;
+}) {
+  // Rows: each scheduled week, then the steady-state row (level === schedule
+  // length). The current row is highlighted.
+  const rows = [
+    ...w.schedule.map((cap, i) => ({ week: i, cap, steady: false })),
+    { week: w.schedule.length, cap: w.targetWeekly, steady: true },
+  ];
+  const dailyText = apiDailyCap != null ? apiDailyCap.toLocaleString() : '—';
+  return (
+    <div className="mt-4">
+      <div className="flex items-baseline justify-between mb-1.5">
+        <h3 className="text-sm font-medium">Weekly progression</h3>
+        <span className="text-xs text-slate-500 dark:text-slate-400">
+          Backlog to send: <strong className="tabular-nums">{w.demand.toLocaleString()}</strong>
+        </span>
+      </div>
+      <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
+        <table className="w-full text-sm">
+          <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
+            <tr>
+              <th className="text-left p-2 w-10"></th>
+              <th className="text-left p-2">Week</th>
+              <th className="text-right p-2">Weekly cap</th>
+              <th className="text-right p-2">Daily cap (API)</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const current = w.started && w.level === r.week;
+              return (
+                <tr
+                  key={r.week}
+                  className={`border-t border-slate-100 dark:border-slate-800 ${
+                    current ? 'bg-orange-50 dark:bg-orange-500/10' : ''
+                  }`}
+                >
+                  <td className="p-2">
+                    {current && (
+                      <span className="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-orange-600 dark:text-orange-400">
+                        <span className="h-1.5 w-1.5 rounded-full bg-orange-500" />
+                        Now
+                      </span>
+                    )}
+                  </td>
+                  <td className="p-2">
+                    Week {r.week}
+                    {r.steady && <span className="text-slate-400 dark:text-slate-500"> + (steady)</span>}
+                  </td>
+                  <td className="p-2 text-right tabular-nums">{r.cap.toLocaleString()}</td>
+                  <td className="p-2 text-right tabular-nums">{dailyText}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p className="text-xs text-slate-400 mt-1.5 dark:text-slate-500">
+        Warmup advances one week at a time, and only when the backlog reaches the next week&rsquo;s
+        cap. The effective send rate each day is the smaller of the weekly cap and the daily cap.
+      </p>
+    </div>
   );
 }
 

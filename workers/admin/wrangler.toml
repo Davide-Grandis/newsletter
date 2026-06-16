@@ -15,11 +15,22 @@ routes = [{ pattern = "console.eneanewsletter.it", custom_domain = true }]
 # Email Routing automation (create/update/delete a rule inbound_address ->
 # ingest worker on newsletter changes) additionally requires the CF_API_TOKEN
 # secret (Email Routing Rules: Edit), set via `wrangler secret put CF_API_TOKEN`.
+#
+# Saving the sending domain (BASE_DOMAIN) on the Settings page auto-resolves the
+# Email Routing zone id via the Cloudflare API. That lookup uses a separate
+# read-only secret CF_READ_API_TOKEN (account-scoped, "Zone: Read"), set via
+# `wrangler secret put CF_READ_API_TOKEN`. If unset, the domain still saves and
+# the console warns that routing rules must be configured manually.
 
 [[d1_databases]]
 binding = "DB"
 database_name = "newsletter_db"
 database_id = "c6995e6a-216d-4ed2-9390-1fc36fb51f1b"
+
+# Email Sending binding — used to send a welcome email to a newly added console
+# user. Requires Email Sending (DKIM) to be enabled on the sending domain.
+[[send_email]]
+name = "SEND_EMAIL"
 
 # R2 bucket for static assets (logos, header images, etc.) served by the
 # admin GUI. Created in the EU jurisdiction, so the jurisdiction must be

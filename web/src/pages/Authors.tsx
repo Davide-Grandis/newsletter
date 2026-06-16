@@ -2,8 +2,16 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, Author } from '../api';
 import { Tooltip } from '../components/Tooltip';
+import { ConfirmDialog } from '../components/ConfirmDialog';
 
-export default function Authors({ newsletterId }: { newsletterId: string }) {
+export default function Authors({
+  newsletterId,
+  canEdit = true,
+}: {
+  newsletterId: string;
+  // Read-only admins can view the allow-list but not add/remove authors.
+  canEdit?: boolean;
+}) {
   const qc = useQueryClient();
   const base = `/api/newsletters/${newsletterId}/authors`;
   const list = useQuery({
@@ -31,6 +39,7 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
   const [email, setEmail] = useState('');
   const [name, setName] = useState('');
   const [err, setErr] = useState<string | null>(null);
+  const [toRemove, setToRemove] = useState<string | null>(null);
 
   function onAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -54,6 +63,7 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
         </p>
       </div>
 
+      {canEdit && (
       <form onSubmit={onAdd} className="flex flex-wrap items-end gap-2 bg-white border border-slate-200 rounded p-3 dark:bg-slate-900 dark:border-slate-800">
         <div className="flex-1 min-w-[200px]">
           <label className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">Email</label>
@@ -85,6 +95,7 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
         </button>
         {err && <div className="basis-full text-xs text-red-600">{err}</div>}
       </form>
+      )}
 
       <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
         <table className="w-full text-sm">
@@ -118,14 +129,14 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
                 <td className="p-2">{a.name ?? <span className="text-slate-400 dark:text-slate-500">—</span>}</td>
                 <td className="p-2 text-slate-500 text-xs dark:text-slate-400">{a.created_at}</td>
                 <td className="p-2">
-                  <button
-                    onClick={() => {
-                      if (confirm(`Remove ${a.email} from the allow-list?`)) remove.mutate(a.email);
-                    }}
-                    className="text-xs text-red-700 hover:underline"
-                  >
-                    Remove
-                  </button>
+                  {canEdit && (
+                    <button
+                      onClick={() => setToRemove(a.email)}
+                      className="text-xs text-red-700 hover:underline"
+                    >
+                      Remove
+                    </button>
+                  )}
                 </td>
               </tr>
             ))}
@@ -139,6 +150,19 @@ export default function Authors({ newsletterId }: { newsletterId: string }) {
           </tbody>
         </table>
       </div>
+
+      <ConfirmDialog
+        open={toRemove !== null}
+        title="Remove author?"
+        message={<>Remove <span className="font-medium">{toRemove}</span> from the allow-list? Inbound mail from this address will be rejected.</>}
+        confirmLabel="Remove"
+        danger
+        busy={remove.isPending}
+        onCancel={() => setToRemove(null)}
+        onConfirm={() => {
+          if (toRemove) remove.mutate(toRemove, { onSettled: () => setToRemove(null) });
+        }}
+      />
     </div>
   );
 }

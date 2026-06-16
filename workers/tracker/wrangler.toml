@@ -14,6 +14,16 @@ database_id = "c6995e6a-216d-4ed2-9390-1fc36fb51f1b"
 binding = "ARCHIVE"
 bucket_name = "newsletter-archive"
 
+# Email Sending binding — delivers the double opt-in confirmation email for the
+# public subscribe page. Requires Email Sending (DKIM) enabled on the domain.
+# (The RFC 8058 mailto unsubscribe, unsubscribe+<id>@<domain>, is handled by the
+# bounce worker, which already receives the catch-all inbound route.)
+[[send_email]]
+name = "SEND_EMAIL"
+
 # Secrets (set via `wrangler secret put`):
 #   LINK_SIGNING_KEY
 #   ATTACHMENT_SIGNING_KEY
+#   TURNSTILE_SECRET_KEY  — Cloudflare Turnstile secret for the public signup
+#                           page (the matching site key is the TURNSTILE_SITE_KEY
+#                           setting, edited from the console Settings page).

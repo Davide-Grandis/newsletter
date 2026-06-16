@@ -1,4 +1,5 @@
 import type { CampaignRow, AttachmentRow } from './types';
+import type { WarmupState } from './warmup';
 
 /**
  * Fetch a single campaign row by id.
@@ -14,7 +15,9 @@ export async function getCampaign(db: D1Database, id: string): Promise<CampaignR
   return await db
     .prepare(
       'SELECT c.id, c.subject, c.html, c.text, c.sent_by, c.status, c.link_mode, ' +
-        'n.from_address AS from_address ' +
+        'c.newsletter_id AS newsletter_id, ' +
+        'n.from_address AS from_address, n.name AS newsletter_name, ' +
+        'n.footer_html AS footer_html, n.footer_text AS footer_text ' +
         'FROM campaigns c LEFT JOIN newsletters n ON n.id = c.newsletter_id WHERE c.id = ?',
     )
     .bind(id)
@@ -52,7 +55,9 @@ export async function getCampaignAttachments(
  * whole table into memory. Pagination uses keyset (`id > lastId ORDER BY id`)
  * which is stable under concurrent inserts and avoids the cost of `OFFSET`.
  * Only `status='active'` rows are yielded; unsubscribed/bounced/complained
- * subscribers are skipped automatically.
+ * subscribers are skipped automatically. Rows still pending double opt-in
+ * confirmation (a non-null `confirm_token`, set by the public signup flow) are
+ * also skipped so an unconfirmed signup never receives mail.
  *
  * @param newsletterId only yield subscribers belonging to this newsletter.
  * @param pageSize how many rows to fetch per D1 round-trip (default 1000).
@@ -67,7 +72,7 @@ export async function* iterateActiveSubscribers(
     const { results } = await db
       .prepare(
         "SELECT id, email, name, token FROM subscribers " +
-          "WHERE newsletter_id = ? AND status='active' AND id > ? ORDER BY id ASC LIMIT ?",
+          "WHERE newsletter_id = ? AND status='active' AND confirm_token IS NULL AND id > ? ORDER BY id ASC LIMIT ?",
       )
       .bind(newsletterId, lastId, pageSize)
       .all<{ id: number; email: string; name: string | null; token: string }>();
@@ -206,4 +211,94 @@ export async function writeLog(db: D1Database, e: LogEntry): Promise<void> {
   } catch (err) {
     console.error('writeLog failed', e.event, err);
   }
+}
+
+// --------------------------------------------------------------------------
+// Warmup state & metrics
+// --------------------------------------------------------------------------
+
+/** Count successfully-sent emails since a UTC 'YYYY-MM-DD HH:MM:SS' instant. */
+export async function countSentSince(db: D1Database, sinceUtc: string): Promise<number> {
+  const row = await db
+    .prepare("SELECT COUNT(*) AS n FROM sends WHERE status = 'sent' AND sent_at >= ?")
+    .bind(sinceUtc)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * Current sending demand: the number of emails still to send across all
+ * campaigns that are queued or in flight, i.e.
+ * `Σ max(total_recipients − sent_count − failed_count, 0)`. Drives the
+ * demand-gated warmup progression.
+ */
+export async function computeDemand(db: D1Database): Promise<number> {
+  const row = await db
+    .prepare(
+      "SELECT COALESCE(SUM(MAX(total_recipients - sent_count - failed_count, 0)), 0) AS n " +
+        "FROM campaigns WHERE status IN ('queued','sending')",
+    )
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/** Load the singleton warmup state row, tolerating a not-yet-migrated table. */
+export async function loadWarmupState(db: D1Database): Promise<WarmupState> {
+  try {
+    const row = await db
+      .prepare('SELECT level, week_started_at, daily_cap, daily_cap_date FROM warmup_state WHERE id = 1')
+      .first<{
+        level: number | null;
+        week_started_at: string | null;
+        daily_cap: number | null;
+        daily_cap_date: string | null;
+      }>();
+    return {
+      level: row?.level ?? null,
+      weekStartedAt: row?.week_started_at ?? null,
+      dailyCap: row?.daily_cap ?? null,
+      dailyCapDate: row?.daily_cap_date ?? null,
+    };
+  } catch {
+    return { level: null, weekStartedAt: null, dailyCap: null, dailyCapDate: null };
+  }
+}
+
+/**
+ * Persist a warmup progression with optimistic concurrency: the update only
+ * applies if the stored `week_started_at` still matches what the caller read,
+ * so two concurrent consumer invocations can't double-advance. Returns whether
+ * this caller won the update.
+ */
+export async function advanceWarmupState(
+  db: D1Database,
+  next: { level: number | null; weekStartedAt: string | null },
+  expectedWeekStartedAt: string | null,
+): Promise<boolean> {
+  const stmt =
+    expectedWeekStartedAt === null
+      ? db
+          .prepare(
+            "UPDATE warmup_state SET level = ?, week_started_at = ?, updated_at = datetime('now') " +
+              'WHERE id = 1 AND week_started_at IS NULL',
+          )
+          .bind(next.level, next.weekStartedAt)
+      : db
+          .prepare(
+            "UPDATE warmup_state SET level = ?, week_started_at = ?, updated_at = datetime('now') " +
+              'WHERE id = 1 AND week_started_at = ?',
+          )
+          .bind(next.level, next.weekStartedAt, expectedWeekStartedAt);
+  const res = await stmt.run();
+  return (res.meta?.changes ?? 0) > 0;
+}
+
+/** Cache the daily sending cap read from the Cloudflare API for a UTC day. */
+export async function saveDailyCap(db: D1Database, cap: number, dateUtc: string): Promise<void> {
+  await db
+    .prepare(
+      "UPDATE warmup_state SET daily_cap = ?, daily_cap_date = ?, updated_at = datetime('now') WHERE id = 1",
+    )
+    .bind(cap, dateUtc)
+    .run();
 }

@@ -58,6 +58,15 @@ export interface Newsletter {
   inbound_address: string;
   // Optional per-newsletter sender. null => falls back to global FROM_ADDRESS.
   from_address: string | null;
+  // Optional per-newsletter footer. null/empty => inherits the global
+  // DEFAULT_FOOTER_HTML / DEFAULT_FOOTER_TEXT settings. Only returned by the
+  // single-newsletter GET (not the list).
+  footer_html?: string | null;
+  footer_text?: string | null;
+  // Public subscribe slug (used in /subscribe/<slug>) and the per-newsletter
+  // switch that enables the public signup page. slug may be null on legacy rows.
+  slug?: string | null;
+  allow_public_signup?: 0 | 1;
   enabled: 0 | 1;
   created_at: string;
   subscriber_count?: number;
@@ -155,6 +164,38 @@ export interface TimeseriesRow {
   n: number;
 }
 
+// Real Email Sending usage read from Cloudflare (not the app's own sends table):
+// the account daily quota plus per-status sent counts for the sending domain's
+// zone over the last 30 days. Each section can independently carry an error.
+export interface EmailSendingStats {
+  configured: boolean;
+  domain: string | null;
+  zoneId: string | null;
+  quota: { unit: string; value: number } | null;
+  quota_error?: string;
+  windowStart: string | null;
+  windowEnd: string | null;
+  total: number;
+  today: number;
+  byStatus: Record<string, number>;
+  stats_error?: string;
+  // Demand-driven warmup progression (read from D1, always present).
+  warmup: {
+    level: number | null;
+    started: boolean;
+    weekStartedAt: string | null;
+    weeklyCap: number;
+    schedule: number[];
+    targetWeekly: number;
+    maxLevel: number;
+    dailyCap: number | null;
+    dailyCapDate: string | null;
+    sentToday: number;
+    sentThisWeek: number;
+    demand: number;
+  };
+}
+
 export interface Author {
   email: string;
   name: string | null;
@@ -176,19 +217,3 @@ export interface Setting {
   fallback: string;
   source: 'db' | 'env' | 'default';
 }
-
-export type Quota =
-  | { enabled: false; target: number }
-  | {
-      enabled: true;
-      weekIndex: number;
-      dailyCap: number;
-      dailyUsed: number;
-      dailyRemaining: number;
-      weeklyCap: number;
-      weeklyUsed: number;
-      weeklyRemaining: number;
-      target: number;
-      windowStart: string;
-      dayWindowStart: string;
-    };

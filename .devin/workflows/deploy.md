@@ -72,7 +72,11 @@ NOT turbo — interactive prompts.
 (cd workers/tracker  && npx wrangler secret put ATTACHMENT_SIGNING_KEY)
 (cd workers/consumer && npx wrangler secret put LINK_SIGNING_KEY)
 (cd workers/consumer && npx wrangler secret put ATTACHMENT_SIGNING_KEY)
-# admin worker has no secret — protected by Cloudflare Access (step 11).
+# Optional but recommended: lets the consumer read the account's daily sending
+# quota for warmup, and the admin show it. Account → Email → Read.
+(cd workers/consumer && npx wrangler secret put CF_READ_API_TOKEN)
+# admin worker has no auth secret — protected by Cloudflare Access (step 11) —
+# but takes the same CF_READ_API_TOKEN (Zone → Read + Account → Email → Read).
 ```
 
 The two signing keys must be identical between consumer and tracker.

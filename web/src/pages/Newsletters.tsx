@@ -1,7 +1,8 @@
 import { FormEvent, useEffect, useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, Newsletter, Setting } from '../api';
+import { api, Newsletter } from '../api';
+import { useIdentity } from '../auth';
 import { Tooltip } from '../components/Tooltip';
 import { PAGE_SIZE, Pagination } from '../components/Pagination';
 
@@ -26,15 +27,17 @@ export default function Newsletters() {
     queryFn: () => api<{ items: Newsletter[] }>('/api/newsletters?limit=1000'),
   });
 
-  // Sending domain and the default sender come from the global settings; the
-  // address inputs only take the local part and the domain is appended.
-  const settings = useQuery({
-    queryKey: ['settings'],
-    queryFn: () => api<{ settings: Setting[] }>('/api/settings'),
-  });
-  const settingValue = (k: string) => settings.data?.settings.find((s) => s.key === k)?.value ?? '';
-  const domain = settingValue('BASE_DOMAIN');
-  const defaultSenderLocal = localPart(settingValue('FROM_ADDRESS'));
+  // Sending domain and default sender come from the identity payload — admins
+  // cannot read the super_admin-only settings endpoint. The address inputs
+  // only take the local part and the domain is appended. `canCreate` mirrors
+  // the server rule: super admins always; otherwise an edit-capable admin with
+  // the global create/delete toggle on (read-only admins never create).
+  const me = useIdentity();
+  const domain = me.data?.base_domain ?? '';
+  const defaultSenderLocal = localPart(me.data?.from_address ?? '');
+  const isEditAdmin = (me.data?.newsletters ?? []).some((n) => n.capability === 'edit');
+  const canCreate =
+    me.data?.role === 'super_admin' || (!!me.data?.allow_admin_newsletter_crud && isEditAdmin);
 
   const items = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -134,6 +137,7 @@ export default function Newsletters() {
         </div>
       )}
 
+      {canCreate && (
       <form
         onSubmit={onCreate}
         className="flex flex-wrap items-end gap-2 bg-white border border-slate-200 rounded p-3 dark:bg-slate-900 dark:border-slate-800"
@@ -166,6 +170,7 @@ export default function Newsletters() {
         </button>
         {err && <div className="basis-full text-xs text-red-600">{err}</div>}
       </form>
+      )}
 
       <div className="flex items-center justify-end gap-2">
         {showSearch && (

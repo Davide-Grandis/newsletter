@@ -1,41 +1,59 @@
 // Warmup schedule: pure helpers (no I/O) used by the consumer to throttle
-// sending and by the admin worker to surface remaining quota.
+// sending and by the admin worker to surface progression. Warmup is always on
+// and cannot be disabled.
 //
-// Caps work in two dimensions:
-//   - weekly cap: indexed by the warmup-week, derived from a step schedule
-//     (e.g. 500, 1500, 5000, 12000, 25000, 40000, then 50000 steady state)
-//     or from the formula `min(target, 500 * 2.5^week)` if no schedule is
-//     configured.
-//   - daily cap: a flat per-UTC-day ceiling that prevents bursting through
-//     the weekly cap in a single day. 5K/day for weeks 0-4 by default; 10K/day
-//     from week `lateStartWeek` (5) onwards.
+// Two caps gate every send, the smaller one binds:
+//   - weekly cap: a step schedule of weekly ceilings, e.g.
+//     [500, 1500, 5000, 12000, 25000, 40000] then `targetWeekly` (50000)
+//     steady state. The active step is the warmup `level`.
+//   - daily cap: read fresh from the Cloudflare Email Sending API once per UTC
+//     day (the account's resolved daily quota), cached in `warmup_state`.
 //
-// "Week" is measured from `WARMUP_START_DATE` (UTC midnight). Day windows are
-// calendar UTC days, which matches `sent_at = datetime('now')` in D1.
+// Progression is DEMAND-DRIVEN, not calendar-driven (there is no start date):
+//   - Warmup "starts" (level 0) the first time demand exceeds 499.
+//   - Each 7-day window it may advance AT MOST one level, and only when demand
+//     has grown to the next level's threshold (= that level's weekly cap).
+//     Otherwise it stays put. Levels never decrease.
+// "Demand" is the count of emails still to send across active campaigns,
+// supplied by the caller. Day/week windows use UTC, matching D1's
+// `sent_at = datetime('now')`.
 
 export interface WarmupConfig {
-  /** ISO date 'YYYY-MM-DD' of week 0; null disables the warmup entirely. */
-  startDate: string | null;
   /** Steady-state weekly cap once the schedule is exhausted. */
   targetWeekly: number;
-  /** Per-week explicit caps. Index = warmup week. */
-  schedule: number[] | null;
-  dailyCapEarly: number;
-  dailyCapLate: number;
-  /** First week (0-based) using the late daily cap. */
-  lateStartWeek: number;
+  /** Per-level weekly caps; index = warmup level. Never empty. */
+  schedule: number[];
+  /** Daily cap used when the Cloudflare API value is unavailable. */
+  fallbackDailyCap: number;
+}
+
+/** Persisted warmup progression + cached daily quota (the `warmup_state` row). */
+export interface WarmupState {
+  /** Current warmup level (0-based), or null until warmup has started. */
+  level: number | null;
+  /** UTC 'YYYY-MM-DD HH:MM:SS' start of the current weekly window, or null. */
+  weekStartedAt: string | null;
+  /** Last daily cap read from the API (normalized per-day), or null. */
+  dailyCap: number | null;
+  /** UTC 'YYYY-MM-DD' the daily cap was read, or null. */
+  dailyCapDate: string | null;
 }
 
 const DEFAULT_SCHEDULE = [500, 1500, 5000, 12000, 25000, 40000];
+const DEFAULT_TARGET_WEEKLY = 50000;
+const DEFAULT_FALLBACK_DAILY_CAP = 1000;
+
+/** Demand below which warmup has not started yet (level 0 threshold is 500). */
+export const WARMUP_START_THRESHOLD = 499;
 
 export function readWarmupConfig(env: Record<string, string | undefined>): WarmupConfig {
-  const target = numOr(env.WARMUP_TARGET_WEEKLY, 50000);
+  const target = numOr(env.WARMUP_TARGET_WEEKLY, DEFAULT_TARGET_WEEKLY);
   let schedule: number[] | null = null;
   const raw = env.WARMUP_SCHEDULE?.trim();
   if (raw) {
     try {
       const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.every((n) => typeof n === 'number' && n >= 0)) {
+      if (Array.isArray(parsed) && parsed.length > 0 && parsed.every((n) => typeof n === 'number' && n >= 0)) {
         schedule = parsed as number[];
       }
     } catch {
@@ -44,12 +62,9 @@ export function readWarmupConfig(env: Record<string, string | undefined>): Warmu
   }
   if (!schedule) schedule = DEFAULT_SCHEDULE.slice();
   return {
-    startDate: env.WARMUP_START_DATE?.trim() || null,
     targetWeekly: target,
     schedule,
-    dailyCapEarly: numOr(env.WARMUP_DAILY_CAP_EARLY, 5000),
-    dailyCapLate: numOr(env.WARMUP_DAILY_CAP_LATE, 10000),
-    lateStartWeek: numOr(env.WARMUP_LATE_START_WEEK, 5),
+    fallbackDailyCap: numOr(env.WARMUP_FALLBACK_DAILY_CAP, DEFAULT_FALLBACK_DAILY_CAP),
   };
 }
 
@@ -59,88 +74,111 @@ function numOr(v: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n >= 0 ? n : fallback;
 }
 
-function parseStartDate(s: string): Date | null {
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
-  if (!m) return null;
-  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
-  return Number.isFinite(d.getTime()) ? d : null;
-}
-
 const MS_PER_DAY = 24 * 3600 * 1000;
 const MS_PER_WEEK = 7 * MS_PER_DAY;
 
-export function weeklyCapFor(cfg: WarmupConfig, week: number): number {
-  if (week < 0) return 0;
-  const sched = cfg.schedule ?? [];
-  if (sched.length > 0) {
-    if (week < sched.length) return sched[week]!;
-    return cfg.targetWeekly;
-  }
-  // Formula fallback if WARMUP_SCHEDULE was set to '[]'.
-  return Math.min(cfg.targetWeekly, Math.floor(500 * Math.pow(2.5, week)));
-}
-
-export function dailyCapFor(cfg: WarmupConfig, week: number): number {
-  if (week < 0) return 0;
-  return week < cfg.lateStartWeek ? cfg.dailyCapEarly : cfg.dailyCapLate;
-}
-
-export interface CurrentWindow {
-  weekIndex: number;
-  dailyCap: number;
-  weeklyCap: number;
-  /** SQLite-comparable 'YYYY-MM-DD HH:MM:SS' UTC strings for `sent_at` filters. */
-  dayStartSql: string;
-  weekStartSql: string;
-  /** Epoch ms for delay calculation. */
-  dayEndMs: number;
-  weekEndMs: number;
+/** Highest meaningful level: the first index whose weekly cap is steady state. */
+export function maxLevel(cfg: WarmupConfig): number {
+  return cfg.schedule.length;
 }
 
 /**
- * Computes the current daily and weekly windows. Returns `null` when warmup
- * is disabled (i.e. `WARMUP_START_DATE` is empty) — callers should treat
- * `null` as "no caps, send freely".
+ * Weekly cap for a level. Level `null` (warmup not started) uses the first
+ * step so small volumes can still flow; levels past the schedule use the
+ * steady-state target.
  */
-export function currentWindow(cfg: WarmupConfig, now: Date): CurrentWindow | null {
-  if (!cfg.startDate) return null;
-  const start = parseStartDate(cfg.startDate);
-  if (!start) return null;
-  const week = Math.max(0, Math.floor((now.getTime() - start.getTime()) / MS_PER_WEEK));
-  const weekStartMs = start.getTime() + week * MS_PER_WEEK;
-  // Calendar UTC day for the daily window.
-  const dayStartMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return {
-    weekIndex: week,
-    dailyCap: dailyCapFor(cfg, week),
-    weeklyCap: weeklyCapFor(cfg, week),
-    dayStartSql: toSqliteUtc(dayStartMs),
-    weekStartSql: toSqliteUtc(weekStartMs),
-    dayEndMs: dayStartMs + MS_PER_DAY,
-    weekEndMs: weekStartMs + MS_PER_WEEK,
-  };
+export function weeklyCapForLevel(cfg: WarmupConfig, level: number | null): number {
+  const l = level ?? 0;
+  if (l < 0) return cfg.schedule[0]!;
+  if (l < cfg.schedule.length) return cfg.schedule[l]!;
+  return cfg.targetWeekly;
 }
 
-function toSqliteUtc(ms: number): string {
+/** Demand threshold required to be at a level (= that level's weekly cap). */
+export function thresholdForLevel(cfg: WarmupConfig, level: number): number {
+  return weeklyCapForLevel(cfg, level);
+}
+
+/** Normalize the Cloudflare quota (`day`/`hour`) to a per-day figure. */
+export function normalizeDailyCap(
+  quota: { unit: string; value: number } | null,
+  fallback: number,
+): number {
+  if (!quota || typeof quota.value !== 'number') return fallback;
+  if (quota.unit === 'hour') return quota.value * 24;
+  return quota.value;
+}
+
+export interface Progression {
+  level: number | null;
+  weekStartedAt: string | null;
+  /** True when the caller should persist the new level/window. */
+  changed: boolean;
+}
+
+/**
+ * Demand-driven progression. Given the persisted state, current demand (emails
+ * still to send) and the wall clock, decide the level + weekly window for now:
+ *   - not started: enter level 0 once demand exceeds the start threshold;
+ *   - within the current 7-day window: no change;
+ *   - window elapsed: open a new window and advance one level iff demand has
+ *     reached the next level's threshold (else stay). Levels never decrease.
+ */
+export function progressWarmup(
+  state: WarmupState,
+  demand: number,
+  now: Date,
+  cfg: WarmupConfig,
+): Progression {
+  if (state.level === null || state.weekStartedAt === null) {
+    if (demand > WARMUP_START_THRESHOLD) {
+      return { level: 0, weekStartedAt: toSqliteUtc(now.getTime()), changed: true };
+    }
+    return { level: state.level, weekStartedAt: state.weekStartedAt, changed: false };
+  }
+  const startedMs = parseSqliteUtc(state.weekStartedAt);
+  if (startedMs === null || now.getTime() - startedMs < MS_PER_WEEK) {
+    return { level: state.level, weekStartedAt: state.weekStartedAt, changed: false };
+  }
+  // The weekly window has elapsed: open a fresh one and consider one step up.
+  const candidate = Math.min(state.level + 1, maxLevel(cfg));
+  let level = state.level;
+  if (candidate > state.level && demand >= thresholdForLevel(cfg, candidate)) {
+    level = candidate;
+  }
+  return { level, weekStartedAt: toSqliteUtc(now.getTime()), changed: true };
+}
+
+export function toSqliteUtc(ms: number): string {
   return new Date(ms).toISOString().replace('T', ' ').slice(0, 19);
 }
 
+function parseSqliteUtc(s: string): number | null {
+  // Stored as 'YYYY-MM-DD HH:MM:SS' UTC.
+  const ms = Date.parse(s.replace(' ', 'T') + 'Z');
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** UTC-midnight 'YYYY-MM-DD HH:MM:SS' for the day containing `now`. */
+export function dayStartSql(now: Date): string {
+  return toSqliteUtc(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+}
+
 /**
- * How many seconds to wait before re-trying when caps are exhausted.
- * Caller passes remaining capacity so we can pick the right boundary
- * (next-day if only daily is exhausted, next-week if weekly is too).
- *
- * Cloudflare Queues caps `delaySeconds` at 12h (43200); if the next window is
- * further away the caller will simply retry after 12h and re-evaluate.
+ * How many seconds to wait before re-trying when caps are exhausted. If the
+ * weekly cap is exhausted we wait until the weekly window rolls; otherwise
+ * until the next UTC day. Cloudflare Queues caps `delaySeconds` at 12h (43200);
+ * the caller re-evaluates on the next attempt.
  */
 export function delayUntilNextWindow(
-  win: CurrentWindow,
-  dailyRemaining: number,
+  weekStartedAtMs: number,
   weeklyRemaining: number,
-  nowMs: number = Date.now(),
+  now: Date = new Date(),
 ): number {
-  const target = weeklyRemaining <= 0 ? win.weekEndMs : win.dayEndMs;
+  const nowMs = now.getTime();
+  const dayEndMs = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()) + MS_PER_DAY;
+  const weekEndMs = weekStartedAtMs + MS_PER_WEEK;
+  const target = weeklyRemaining <= 0 ? weekEndMs : dayEndMs;
   const sec = Math.max(60, Math.ceil((target - nowMs) / 1000));
-  void dailyRemaining;
   return Math.min(sec, 43200);
 }
