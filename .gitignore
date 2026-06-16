@@ -14,6 +14,9 @@ web/tsconfig.tsbuildinfo
 # DB migrations are local only — db/schema.sql is the authoritative schema
 db/migrations/
 
+# Local Google Doc stubs
+docs/*.gdoc
+
 # Deployment-specific worker config — copy wrangler.toml.example to
 # wrangler.toml and fill in your own IDs/hostnames. Templates stay tracked.
 workers/*/wrangler.toml
