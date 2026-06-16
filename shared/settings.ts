@@ -61,11 +61,9 @@ export const SETTING_KEYS = [
   'SOFT_BOUNCE_THRESHOLD',
   // -- Warmup --
   // Warmup is always on and demand-driven (no start date). The weekly ramp is
-  // a step schedule; the daily cap is read live from the Cloudflare API by the
-  // consumer (WARMUP_FALLBACK_DAILY_CAP is used only when that read fails).
-  'WARMUP_TARGET_WEEKLY',
+  // a JSON array of weekly ceilings; steady state is the last element. The
+  // daily cap is read live from the Cloudflare API (fallback is hardwired).
   'WARMUP_SCHEDULE',
-  'WARMUP_FALLBACK_DAILY_CAP',
 ] as const;
 
 export type SettingKey = (typeof SETTING_KEYS)[number];
@@ -124,10 +122,7 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   RETENTION_DAYS: '90',
   HARD_BOUNCE_THRESHOLD: '1',
   SOFT_BOUNCE_THRESHOLD: '5',
-  WARMUP_TARGET_WEEKLY: '50000',
   WARMUP_SCHEDULE: '[500, 1500, 5000, 12000, 25000, 40000]',
-  // Daily cap used only when the live Cloudflare API quota cannot be read.
-  WARMUP_FALLBACK_DAILY_CAP: '1000',
 };
 
 /**

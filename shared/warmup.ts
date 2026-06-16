@@ -4,8 +4,8 @@
 //
 // Two caps gate every send, the smaller one binds:
 //   - weekly cap: a step schedule of weekly ceilings, e.g.
-//     [500, 1500, 5000, 12000, 25000, 40000] then `targetWeekly` (50000)
-//     steady state. The active step is the warmup `level`.
+//     [500, 1500, 5000, 12000, 25000, 40000]; steady state is the last
+//     step. The active step is the warmup `level`.
 //   - daily cap: read fresh from the Cloudflare Email Sending API once per UTC
 //     day (the account's resolved daily quota), cached in `warmup_state`.
 //
@@ -40,14 +40,12 @@ export interface WarmupState {
 }
 
 const DEFAULT_SCHEDULE = [500, 1500, 5000, 12000, 25000, 40000];
-const DEFAULT_TARGET_WEEKLY = 50000;
 const DEFAULT_FALLBACK_DAILY_CAP = 1000;
 
 /** Demand below which warmup has not started yet (level 0 threshold is 500). */
 export const WARMUP_START_THRESHOLD = 499;
 
 export function readWarmupConfig(env: Record<string, string | undefined>): WarmupConfig {
-  const target = numOr(env.WARMUP_TARGET_WEEKLY, DEFAULT_TARGET_WEEKLY);
   let schedule: number[] | null = null;
   const raw = env.WARMUP_SCHEDULE?.trim();
   if (raw) {
@@ -62,9 +60,9 @@ export function readWarmupConfig(env: Record<string, string | undefined>): Warmu
   }
   if (!schedule) schedule = DEFAULT_SCHEDULE.slice();
   return {
-    targetWeekly: target,
+    targetWeekly: schedule[schedule.length - 1]!,
     schedule,
-    fallbackDailyCap: numOr(env.WARMUP_FALLBACK_DAILY_CAP, DEFAULT_FALLBACK_DAILY_CAP),
+    fallbackDailyCap: DEFAULT_FALLBACK_DAILY_CAP,
   };
 }
 
