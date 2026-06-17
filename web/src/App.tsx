@@ -195,8 +195,8 @@ function Layout() {
   );
 }
 
-const APP_VERSION = '1.0';
-const LAST_UPDATED = 'Jun 15, 2026';   
+const APP_VERSION = '1.1';
+const LAST_UPDATED = 'Jun 17, 2026';
 
 function Footer() {
   return (

@@ -43,8 +43,8 @@ export default function Help() {
     () => splitSections(data?.content ?? ''),
     [data?.content],
   );
-  const [tab, setTab] = useState(0);
-  const active = sections[tab] ?? sections[0];
+  const [tab, setTab] = useState<number | 'about'>(0);
+  const active = typeof tab === 'number' ? (sections[tab] ?? sections[0]) : null;
 
   if (isLoading) {
     return <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>;
@@ -88,28 +88,38 @@ export default function Help() {
         </article>
       )}
 
-      {sections.length > 0 ? (
-        <div className="pt-6">
-          <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800 mb-4">
-            {sections.map((s, i) => (
-              <TabButton key={s.title} active={i === tab} onClick={() => setTab(i)}>
-                {s.title}
-              </TabButton>
-            ))}
-          </div>
+      <div className="pt-6">
+        <div className="flex flex-wrap gap-1 border-b border-slate-200 dark:border-slate-800 mb-4">
+          {sections.map((s, i) => (
+            <TabButton key={s.title} active={tab === i} onClick={() => setTab(i)}>
+              {s.title}
+            </TabButton>
+          ))}
+          {sections.length === 0 && (
+            <TabButton active={tab !== 'about'} onClick={() => setTab(0)}>
+              Contents
+            </TabButton>
+          )}
+          <TabButton active={tab === 'about'} onClick={() => setTab('about')}>
+            About
+          </TabButton>
+        </div>
+        {tab === 'about' ? (
+          <AboutCard />
+        ) : sections.length > 0 ? (
           <article className="prose-sm max-w-none">
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
               {active ? `## ${active.title}\n${active.body}` : ''}
             </ReactMarkdown>
           </article>
-        </div>
-      ) : (
-        <article className="prose-sm max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
-            {data?.content ?? ''}
-          </ReactMarkdown>
-        </article>
-      )}
+        ) : (
+          <article className="prose-sm max-w-none">
+            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+              {data?.content ?? ''}
+            </ReactMarkdown>
+          </article>
+        )}
+      </div>
     </div>
   );
 }
@@ -129,12 +139,50 @@ function TabButton({
       onClick={onClick}
       className={`px-3 py-2 text-sm -mb-px border-b-2 ${
         active
-          ? 'border-orange-500 text-orange-600 font-medium dark:border-orange-400 dark:text-orange-400'
-          : 'border-transparent text-orange-500 hover:text-orange-600 dark:text-orange-400/80 dark:hover:text-orange-300'
+          ? 'border-slate-900 text-slate-900 font-medium dark:border-slate-100 dark:text-slate-100'
+          : 'border-transparent text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100'
       }`}
     >
       {children}
     </button>
+  );
+}
+
+function AboutCard() {
+  return (
+    <div className="border border-slate-200 rounded-lg dark:border-slate-700 overflow-hidden">
+      <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 dark:bg-slate-800/60 dark:border-slate-700">
+        <h2 className="text-base font-medium">Newsletter Distribution</h2>
+        <p className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">Serverless newsletter pipeline on Cloudflare Workers</p>
+      </div>
+      <div className="px-4 py-4 space-y-3 text-sm text-slate-700 dark:text-slate-300">
+        <p>
+          An author emails a newsletter address. Cloudflare Email Routing triggers the Ingest Worker, which
+          stores attachments in R2, persists the campaign in D1, and fans out recipient batches via Cloudflare Queues.
+          The Consumer Worker builds per-recipient MIME messages with tracking and sends them through the Email Sending binding.
+          Bounces, opens, clicks and unsubscribes are logged to D1.
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs">
+          {[
+            ['Ingest', 'Receives inbound email via Email Routing, stores it and enqueues sends'],
+            ['Consumer', 'Dequeues batches, builds MIME per recipient, sends via Email Sending'],
+            ['Admin', 'Serves this console and exposes the management REST API'],
+            ['Bounce', 'Processes VERP bounce emails and updates subscriber status'],
+            ['Cleanup', 'Daily cron: deletes expired campaigns, attachments and archives'],
+          ].map(([name, desc]) => (
+            <div key={name} className="flex gap-2">
+              <span className="shrink-0 font-medium text-slate-900 dark:text-slate-100 w-16">{name}</span>
+              <span className="text-slate-500 dark:text-slate-400">{desc}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="px-4 py-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
+        <span>v1.0 · Last updated Jun 15, 2026</span>
+        <span>Built on Cloudflare Workers</span>
+        <span>Davide Grandis · <a href="mailto:davideg@cloudflare.com" className="hover:underline">davideg@cloudflare.com</a></span>
+      </div>
+    </div>
   );
 }
 

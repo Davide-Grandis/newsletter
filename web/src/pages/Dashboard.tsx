@@ -1,9 +1,20 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
-import { api, Overview, Page, Campaign } from '../api';
+import { api, Overview, Page, Campaign, EmailSendingStats } from '../api';
+import { useIdentity } from '../auth';
 import { CampaignStatus } from './Campaigns';
 
 export default function Dashboard() {
+  const me = useIdentity();
+  const isSuper = me.data?.role === 'super_admin';
+
+  const sending = useQuery({
+    queryKey: ['email-sending-stats'],
+    queryFn: () => api<EmailSendingStats>('/api/email-sending-stats'),
+    enabled: isSuper,
+    staleTime: 60_000,
+  });
+
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api<Overview>('/api/stats/overview'),
@@ -12,10 +23,11 @@ export default function Dashboard() {
     queryKey: ['overview-campaigns'],
     queryFn: () => api<Page<Campaign>>('/api/campaigns?limit=12'),
   });
-  const refreshing = isFetching || campaigns.isFetching;
+  const refreshing = isFetching || campaigns.isFetching || sending.isFetching;
   const refresh = () => {
     refetch();
     campaigns.refetch();
+    if (isSuper) sending.refetch();
   };
 
   if (isLoading) return <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>;
@@ -61,14 +73,46 @@ export default function Dashboard() {
         <Card label="Unsubscribed / bounced" value={(subTotals.unsubscribed ?? 0) + (subTotals.bounced ?? 0)} sub={`${subTotals.bounced ?? 0} bounced`} />
       </div>
 
-      <h2 className="text-base font-medium">Last 7 days</h2>
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <h2 className="text-base font-medium">Events in the last 7 days</h2>
+      <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
         <Card label="Opens" value={evt.open ?? 0} />
         <Card label="Clicks" value={evt.click ?? 0} />
         <Card label="Bounces" value={evt.bounce ?? 0} />
+        <Card label="New subs" value={evt.subscribe ?? 0} />
         <Card label="Unsubs" value={evt.unsubscribe ?? 0} />
         <Card label="Downloads" value={evt.download ?? 0} />
       </div>
+
+      {isSuper && (
+        <>
+          <h2 className="text-base font-medium">Status / warm-up</h2>
+          {sending.isLoading ? (
+            <div className="text-sm text-slate-500 dark:text-slate-400">Loading…</div>
+          ) : sending.error ? (
+            <div className="text-sm text-red-600">{(sending.error as Error).message}</div>
+          ) : sending.data ? (
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+              <Card
+                label="Warm-up daily cap"
+                value={sending.data.warmup.warmupDailyCap}
+                sub={!sending.data.warmup.started ? 'not started' : undefined}
+              />
+              <Card
+                label="Warm-up day"
+                value={`${sending.data.warmup.day ?? 0} / ${sending.data.warmup.totalDays}`}
+                sub={!sending.data.warmup.started ? 'not started' : undefined}
+              />
+              <Card
+                label="Email daily quota"
+                value={sending.data.quota?.value ?? 0}
+                sub={!sending.data.quota ? (sending.data.quota_error ? 'unavailable' : 'not assigned') : undefined}
+              />
+              <Card label="Sent today" value={sending.data.today} />
+              <Card label="Backlog" value={sending.data.warmup.demand} />
+            </div>
+          ) : null}
+        </>
+      )}
 
       <section>
         <div className="flex items-baseline justify-between mb-2">
@@ -171,6 +215,7 @@ export default function Dashboard() {
           </div>
         )}
       </section>
+
     </div>
   );
 }
@@ -195,12 +240,13 @@ export function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
-function Card({ label, value, sub }: { label: string; value: number; sub?: string }) {
+function Card({ label, value, sub }: { label: string; value: number | string; sub?: string }) {
   return (
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
       <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
-      <div className="text-2xl font-semibold mt-1">{value.toLocaleString()}</div>
+      <div className="text-2xl font-semibold mt-1">{typeof value === 'number' ? value.toLocaleString() : value}</div>
       {sub && <div className="text-xs text-slate-400 mt-0.5 dark:text-slate-500">{sub}</div>}
     </div>
   );
 }
+

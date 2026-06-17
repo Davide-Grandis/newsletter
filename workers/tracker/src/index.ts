@@ -17,6 +17,7 @@ export interface Env {
   FROM_ADDRESS?: string;
   BASE_DOMAIN?: string;
   TRACKING_BASE_URL?: string;
+  TURNSTILE_ENABLED?: string;
   TURNSTILE_SITE_KEY?: string;
 }
 
@@ -159,11 +160,13 @@ async function handleSubscribe(
 ): Promise<Response> {
   const cfg = await loadSettings(env.DB, env);
   const siteKey = cfg.TURNSTILE_SITE_KEY ?? '';
+  const turnstileEnabled = (cfg.TURNSTILE_ENABLED ?? 'true') !== 'false';
   const nl = await findSignupNewsletter(env, slug);
   if (!nl) return htmlResponse(pageShell('Not found', '<p>This subscription page is not available.</p>'), 404);
 
-  // Signup requires Turnstile to be fully configured (site key + secret).
-  if (!siteKey || !env.TURNSTILE_SECRET_KEY || !env.SEND_EMAIL) {
+  // Signup requires SEND_EMAIL. When Turnstile is enabled it additionally
+  // requires a configured site key and secret.
+  if (!env.SEND_EMAIL || (turnstileEnabled && (!siteKey || !env.TURNSTILE_SECRET_KEY))) {
     return htmlResponse(
       pageShell(
         'Signup unavailable',
@@ -173,8 +176,10 @@ async function handleSubscribe(
     );
   }
 
+  const effectiveSiteKey = turnstileEnabled ? siteKey : '';
+
   if (req.method === 'GET') {
-    return htmlResponse(subscribeForm(slug, nl.name, siteKey, null));
+    return htmlResponse(subscribeForm(slug, nl.name, effectiveSiteKey, null));
   }
 
   if (req.method === 'POST') {
@@ -184,11 +189,13 @@ async function handleSubscribe(
     const tsToken = String(form?.get('cf-turnstile-response') ?? '');
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      return htmlResponse(subscribeForm(slug, nl.name, siteKey, 'Please enter a valid email address.'), 400);
+      return htmlResponse(subscribeForm(slug, nl.name, effectiveSiteKey, 'Please enter a valid email address.'), 400);
     }
-    const human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY, tsToken, req.headers.get('cf-connecting-ip'));
-    if (!human) {
-      return htmlResponse(subscribeForm(slug, nl.name, siteKey, 'Verification failed. Please try again.'), 400);
+    if (turnstileEnabled) {
+      const human = await verifyTurnstile(env.TURNSTILE_SECRET_KEY!, tsToken, req.headers.get('cf-connecting-ip'));
+      if (!human) {
+        return htmlResponse(subscribeForm(slug, nl.name, effectiveSiteKey, 'Verification failed. Please try again.'), 400);
+      }
     }
 
     // Decide whether to (re)send a confirmation. An already-confirmed active
@@ -360,16 +367,21 @@ function pageShell(title: string, bodyHtml: string): string {
 function subscribeForm(slug: string, newsletterName: string, siteKey: string, error: string | null): string {
   const name = escapeHtml(newsletterName);
   const err = error ? `<p class="err">${escapeHtml(error)}</p>` : '';
+  const tsScript = siteKey
+    ? `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>`
+    : '';
+  const tsWidget = siteKey
+    ? `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>`
+    : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-    `<title>Subscribe to ${name}</title>${PAGE_CSS}` +
-    `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script></head>` +
+    `<title>Subscribe to ${name}</title>${PAGE_CSS}${tsScript}</head>` +
     `<body><main class="card"><h1>Subscribe to ${name}</h1>` +
     `<p class="muted">Enter your details and we'll send a confirmation link.</p>${err}` +
     `<form method="post" action="/subscribe/${encodeURIComponent(slug)}">` +
     `<label>Email<input type="email" name="email" required autocomplete="email" placeholder="you@example.com"></label>` +
     `<label>Name <span class="opt">(optional)</span><input type="text" name="name" autocomplete="name"></label>` +
-    `<div class="cf-turnstile" data-sitekey="${escapeHtml(siteKey)}"></div>` +
+    `${tsWidget}` +
     `<button type="submit">Subscribe</button>` +
     `</form></main></body></html>`;
 }

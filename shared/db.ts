@@ -246,49 +246,49 @@ export async function computeDemand(db: D1Database): Promise<number> {
 export async function loadWarmupState(db: D1Database): Promise<WarmupState> {
   try {
     const row = await db
-      .prepare('SELECT level, week_started_at, daily_cap, daily_cap_date FROM warmup_state WHERE id = 1')
+      .prepare('SELECT day, day_started_at, daily_cap, daily_cap_date FROM warmup_state WHERE id = 1')
       .first<{
-        level: number | null;
-        week_started_at: string | null;
+        day: number | null;
+        day_started_at: string | null;
         daily_cap: number | null;
         daily_cap_date: string | null;
       }>();
     return {
-      level: row?.level ?? null,
-      weekStartedAt: row?.week_started_at ?? null,
+      day: row?.day ?? null,
+      dayStartedAt: row?.day_started_at ?? null,
       dailyCap: row?.daily_cap ?? null,
       dailyCapDate: row?.daily_cap_date ?? null,
     };
   } catch {
-    return { level: null, weekStartedAt: null, dailyCap: null, dailyCapDate: null };
+    return { day: null, dayStartedAt: null, dailyCap: null, dailyCapDate: null };
   }
 }
 
 /**
  * Persist a warmup progression with optimistic concurrency: the update only
- * applies if the stored `week_started_at` still matches what the caller read,
+ * applies if the stored `day_started_at` still matches what the caller read,
  * so two concurrent consumer invocations can't double-advance. Returns whether
  * this caller won the update.
  */
 export async function advanceWarmupState(
   db: D1Database,
-  next: { level: number | null; weekStartedAt: string | null },
-  expectedWeekStartedAt: string | null,
+  next: { day: number | null; dayStartedAt: string | null },
+  expectedDayStartedAt: string | null,
 ): Promise<boolean> {
   const stmt =
-    expectedWeekStartedAt === null
+    expectedDayStartedAt === null
       ? db
           .prepare(
-            "UPDATE warmup_state SET level = ?, week_started_at = ?, updated_at = datetime('now') " +
-              'WHERE id = 1 AND week_started_at IS NULL',
+            "UPDATE warmup_state SET day = ?, day_started_at = ?, updated_at = datetime('now') " +
+              'WHERE id = 1 AND day_started_at IS NULL',
           )
-          .bind(next.level, next.weekStartedAt)
+          .bind(next.day, next.dayStartedAt)
       : db
           .prepare(
-            "UPDATE warmup_state SET level = ?, week_started_at = ?, updated_at = datetime('now') " +
-              'WHERE id = 1 AND week_started_at = ?',
+            "UPDATE warmup_state SET day = ?, day_started_at = ?, updated_at = datetime('now') " +
+              'WHERE id = 1 AND day_started_at = ?',
           )
-          .bind(next.level, next.weekStartedAt, expectedWeekStartedAt);
+          .bind(next.day, next.dayStartedAt, expectedDayStartedAt);
   const res = await stmt.run();
   return (res.meta?.changes ?? 0) > 0;
 }

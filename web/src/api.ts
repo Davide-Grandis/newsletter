@@ -181,17 +181,16 @@ export interface EmailSendingStats {
   stats_error?: string;
   // Demand-driven warmup progression (read from D1, always present).
   warmup: {
-    level: number | null;
+    day: number | null;
     started: boolean;
-    weekStartedAt: string | null;
-    weeklyCap: number;
-    schedule: number[];
-    targetWeekly: number;
-    maxLevel: number;
+    dayStartedAt: string | null;
+    warmupDailyCap: number;
+    minDaily: number;
+    maxDaily: number;
+    totalDays: number;
     dailyCap: number | null;
     dailyCapDate: string | null;
     sentToday: number;
-    sentThisWeek: number;
     demand: number;
   };
 }

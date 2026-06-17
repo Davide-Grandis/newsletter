@@ -14,8 +14,7 @@
 import { EmailMessage } from 'cloudflare:email';
 import {
   readWarmupConfig,
-  weeklyCapForLevel,
-  maxLevel,
+  dailyCapForDay,
   dayStartSql,
   type WarmupState,
 } from '../../../shared/warmup';
@@ -205,16 +204,10 @@ function validateSetting(key: string, val: string): string | null {
   if (BOOLEAN_SETTINGS.has(key)) {
     return val === 'true' || val === 'false' ? null : "must be 'true' or 'false'";
   }
-  if (key === 'WARMUP_SCHEDULE') {
-    try {
-      const arr = JSON.parse(val);
-      if (!Array.isArray(arr) || !arr.every((n) => typeof n === 'number' && n >= 0)) {
-        return 'must be a JSON array of non-negative numbers';
-      }
-    } catch {
-      return 'must be valid JSON (e.g. [500, 1500, 5000])';
-    }
-    return null;
+  if (key === 'WARMUP_MIN_DAILY' || key === 'WARMUP_MAX_DAILY' || key === 'WARMUP_DAYS') {
+    return /^\d+$/.test(val.trim()) && Number(val.trim()) > 0
+      ? null
+      : 'must be a positive integer';
   }
   if (key === 'BASE_DOMAIN') {
     // The sending domain is required and must look like a hostname. Existence
@@ -553,6 +546,25 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     for (const key of toDelete) {
       stmts.push(rawEnv.DB.prepare('DELETE FROM settings WHERE key = ?').bind(key));
     }
+    // When the sending domain changes, automatically rewrite FROM_ADDRESS to use
+    // the new domain (preserving the local part), so the consumer sends from the
+    // correct address without requiring the admin to manually re-save that field.
+    if (domainEntry) {
+      const newDomain = domainEntry[1].trim().toLowerCase();
+      const fromRow = await rawEnv.DB
+        .prepare("SELECT value FROM settings WHERE key = 'FROM_ADDRESS'")
+        .first<{ value: string }>();
+      const currentFrom = fromRow?.value ?? SETTINGS_DEFAULTS.FROM_ADDRESS;
+      const atIdx = currentFrom.indexOf('@');
+      const localPart = atIdx >= 0 ? currentFrom.slice(0, atIdx) : currentFrom;
+      stmts.push(
+        rawEnv.DB.prepare(
+          "INSERT INTO settings (key, value) VALUES ('FROM_ADDRESS', ?) " +
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+        ).bind(`${localPart}@${newDomain}`),
+      );
+    }
+
     // Persist the verified zone id alongside the domain (or drop it if the
     // domain is being cleared).
     if (resolvedZoneId) {
@@ -1240,7 +1252,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           const raw = body.slug.trim().toLowerCase();
           let slug: string;
           if (raw === '') {
-            const baseName = typeof body.name === 'string' ? body.name : '';
+            // Prefer the name being set in this same request; otherwise fall
+            // back to the newsletter's existing name from D1 so the slug is
+            // always derived from a human-readable name, not the UUID.
+            let baseName = typeof body.name === 'string' ? body.name.trim() : '';
+            if (!baseName) {
+              const existing = await env.DB
+                .prepare('SELECT name FROM newsletters WHERE id = ? LIMIT 1')
+                .bind(nid)
+                .first<{ name: string }>();
+              baseName = existing?.name ?? '';
+            }
             slug = await uniqueSlug(env, baseName || nid, nid);
           } else {
             if (!SLUG_RE.test(raw) || raw.length > SLUG_MAX) {
@@ -1382,6 +1404,58 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           .run();
         return Response.json({ ok: true });
       }
+    }
+
+    // ---- authors export / import ----
+    if (rest === '/authors/export' && m === 'GET') {
+      const { results } = await env.DB
+        .prepare('SELECT email, name, created_at FROM authors WHERE newsletter_id = ? ORDER BY email ASC')
+        .bind(nid)
+        .all<{ email: string; name: string | null; created_at: string }>();
+      const stamp = new Date().toISOString().slice(0, 10);
+      const csvEscape = (v: string | null) => {
+        const s = v ?? '';
+        return s.includes(',') || s.includes('"') || s.includes('\n') ? `"${s.replace(/"/g, '""')}"` : s;
+      };
+      const rows = (results ?? []).map((r) => `${csvEscape(r.email)},${csvEscape(r.name)},${csvEscape(r.created_at)}`);
+      const csv = ['email,name,created_at', ...rows].join('\r\n') + '\r\n';
+      return new Response(csv, {
+        headers: {
+          'content-type': 'text/csv; charset=utf-8',
+          'content-disposition': `attachment; filename="authors-${stamp}.csv"`,
+        },
+      });
+    }
+    if (rest === '/authors/import' && m === 'POST') {
+      if (!canEdit) return forbidden();
+      const ct = req.headers.get('content-type') ?? '';
+      const text = ct.includes('application/json')
+        ? (await req.json<{ csv: string }>()).csv
+        : await req.text();
+      // CSV columns: email (col 0), name (col 1, optional). Header row is skipped.
+      // Duplicates (by email, case-insensitive) are skipped, not updated.
+      const existing = await env.DB
+        .prepare('SELECT email FROM authors WHERE newsletter_id = ?')
+        .bind(nid)
+        .all<{ email: string }>();
+      const seen = new Set((existing.results ?? []).map((r) => r.email.toLowerCase()));
+      const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      let added = 0;
+      let duplicated = 0;
+      for (const line of lines.slice(1)) {
+        const cols = splitCsvLine(line);
+        const email = (cols[0] ?? '').trim().toLowerCase();
+        if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) continue;
+        if (seen.has(email)) { duplicated++; continue; }
+        seen.add(email);
+        const name = (cols[1] ?? '').trim() || null;
+        await env.DB
+          .prepare('INSERT INTO authors (newsletter_id, email, name) VALUES (?, ?, ?) ON CONFLICT(newsletter_id, email) DO NOTHING')
+          .bind(nid, email, name)
+          .run();
+        added++;
+      }
+      return Response.json({ ok: true, added, duplicated });
     }
 
     // ---- subscribers (scoped to newsletter) ----
@@ -2098,17 +2172,16 @@ async function emailSendingStats(env: Env): Promise<{
   byStatus: Record<string, number>;
   stats_error?: string;
   warmup: {
-    level: number | null;
+    day: number | null;
     started: boolean;
-    weekStartedAt: string | null;
-    weeklyCap: number;
-    schedule: number[];
-    targetWeekly: number;
-    maxLevel: number;
+    dayStartedAt: string | null;
+    warmupDailyCap: number;
+    minDaily: number;
+    maxDaily: number;
+    totalDays: number;
     dailyCap: number | null;
     dailyCapDate: string | null;
     sentToday: number;
-    sentThisWeek: number;
     demand: number;
   };
 }> {
@@ -2116,6 +2189,7 @@ async function emailSendingStats(env: Env): Promise<{
   const zoneId = env.EMAIL_ROUTING_ZONE_ID ?? null;
   const accountId = env.ACCESS_ACCOUNT_ID ?? null;
   const domain = env.BASE_DOMAIN ?? null;
+  const todayStr = new Date().toISOString().slice(0, 10);
   const out = {
     configured: Boolean(token && zoneId),
     domain,
@@ -2137,24 +2211,21 @@ async function emailSendingStats(env: Env): Promise<{
     const wstate: WarmupState = await loadWarmupState(env.DB);
     const now = new Date();
     const dStart = dayStartSql(now);
-    const wStart = wstate.weekStartedAt ?? dStart;
-    const [sentToday, sentThisWeek, demand] = await Promise.all([
+    const [sentToday, demand] = await Promise.all([
       countSentSince(env.DB, dStart),
-      countSentSince(env.DB, wStart),
       computeDemand(env.DB),
     ]);
     out.warmup = {
-      level: wstate.level,
-      started: wstate.level !== null,
-      weekStartedAt: wstate.weekStartedAt,
-      weeklyCap: weeklyCapForLevel(cfg, wstate.level),
-      schedule: cfg.schedule,
-      targetWeekly: cfg.targetWeekly,
-      maxLevel: maxLevel(cfg),
+      day: wstate.day,
+      started: wstate.day !== null,
+      dayStartedAt: wstate.dayStartedAt,
+      warmupDailyCap: dailyCapForDay(wstate.day, cfg),
+      minDaily: cfg.minDaily,
+      maxDaily: cfg.maxDaily,
+      totalDays: cfg.totalDays,
       dailyCap: wstate.dailyCap,
       dailyCapDate: wstate.dailyCapDate,
       sentToday,
-      sentThisWeek,
       demand,
     };
   }
@@ -2165,25 +2236,44 @@ async function emailSendingStats(env: Env): Promise<{
     return out;
   }
 
-  // --- Daily quota (account-scoped REST endpoint) ---
+  // --- Daily quota (account-scoped REST endpoint, cached in D1 per UTC day) ---
   if (!accountId) {
     out.quota_error = 'account id not configured (save the Sending domain in Settings)';
   } else {
-    try {
-      const res = await fetch(`${CF_API}/accounts/${accountId}/email/sending/limits`, {
-        headers: { authorization: `Bearer ${token}` },
-      });
-      const body: any = await res.json().catch(() => ({}));
-      if (!res.ok || body?.success === false) {
-        out.quota_error =
-          (body?.errors ?? []).map((e: { message?: string }) => e.message).filter(Boolean).join('; ') ||
-          `HTTP ${res.status}`;
-      } else {
-        const q = body?.result?.quota;
-        out.quota = q && typeof q.value === 'number' ? { unit: q.unit, value: q.value } : null;
+    const [cachedVal, cachedDate] = await Promise.all([
+      env.DB.prepare("SELECT value FROM settings WHERE key = 'CACHED_QUOTA_VALUE'").first<{ value: string }>(),
+      env.DB.prepare("SELECT value FROM settings WHERE key = 'CACHED_QUOTA_DATE'").first<{ value: string }>(),
+    ]);
+    if (cachedDate?.value === todayStr && cachedVal?.value) {
+      try { out.quota = JSON.parse(cachedVal.value); } catch { out.quota = null; }
+    } else {
+      try {
+        const res = await fetch(`${CF_API}/accounts/${accountId}/email/sending/limits`, {
+          headers: { authorization: `Bearer ${token}` },
+        });
+        const body: any = await res.json().catch(() => ({}));
+        if (!res.ok || body?.success === false) {
+          out.quota_error =
+            (body?.errors ?? []).map((e: { message?: string }) => e.message).filter(Boolean).join('; ') ||
+            `HTTP ${res.status}`;
+        } else {
+          const q = body?.result?.quota;
+          out.quota = q && typeof q.value === 'number' ? { unit: q.unit, value: q.value } : null;
+          if (out.quota) {
+            const upsert = (key: string, val: string) =>
+              env.DB.prepare(
+                "INSERT INTO settings (key, value) VALUES (?, ?) " +
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = datetime('now')",
+              ).bind(key, val);
+            await env.DB.batch([
+              upsert('CACHED_QUOTA_VALUE', JSON.stringify(out.quota)),
+              upsert('CACHED_QUOTA_DATE', todayStr),
+            ]);
+          }
+        }
+      } catch (e) {
+        out.quota_error = (e as Error).message;
       }
-    } catch (e) {
-      out.quota_error = (e as Error).message;
     }
   }
 
@@ -2196,7 +2286,7 @@ async function emailSendingStats(env: Env): Promise<{
   const start = new Date(end.getTime() - 30 * 86_400_000);
   const fmt = (d: Date) => d.toISOString().slice(0, 10);
   out.windowStart = fmt(start);
-  out.windowEnd = fmt(end);
+  out.windowEnd = todayStr;
   const query =
     'query($zoneTag:string!,$start:Date!,$end:Date!){viewer{zones(filter:{zoneTag:$zoneTag}){' +
     'emailSendingAdaptiveGroups(filter:{date_geq:$start,date_leq:$end},limit:10000,orderBy:[date_DESC]){' +
@@ -2213,7 +2303,6 @@ async function emailSendingStats(env: Env): Promise<{
       return out;
     }
     const groups = body?.data?.viewer?.zones?.[0]?.emailSendingAdaptiveGroups ?? [];
-    const todayStr = fmt(end);
     for (const g of groups) {
       const c = Number(g.count ?? 0);
       const status = String(g.dimensions?.status ?? 'unknown');

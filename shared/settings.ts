@@ -48,6 +48,7 @@ export const SETTING_KEYS = [
   // Cloudflare Turnstile site key (public) for the public subscribe page. The
   // matching secret is a Worker Secret (TURNSTILE_SECRET_KEY), not a setting.
   // Empty disables bot protection (and, by safety, the public signup page).
+  'TURNSTILE_ENABLED',
   'TURNSTILE_SITE_KEY',
   // -- Attachments --
   'MAX_ATTACHMENT_BYTES',
@@ -65,11 +66,14 @@ export const SETTING_KEYS = [
   'HARD_BOUNCE_THRESHOLD',
   'SOFT_BOUNCE_THRESHOLD',
   // -- Warmup --
-  // Warmup is always on and demand-driven (no start date). The weekly ramp is
-  // a JSON array of weekly ceilings; steady state is the last element. The
-  // daily cap is read live from the Cloudflare API; DAILY_CAP_FALLBACK is
-  // used only when that read fails.
-  'WARMUP_SCHEDULE',
+  // Warmup is always on and demand-driven (no start date). The daily cap follows
+  // a geometric ramp from WARMUP_MIN_DAILY (day 1) to WARMUP_MAX_DAILY (day
+  // WARMUP_DAYS) using V(t) = min × (max/min)^((t-1)/(days-1)). The Cloudflare
+  // API quota is read once per UTC day; DAILY_CAP_FALLBACK is used when the
+  // read fails. Warmup advances one day per calendar day with demand > 0.
+  'WARMUP_MIN_DAILY',
+  'WARMUP_MAX_DAILY',
+  'WARMUP_DAYS',
   'DAILY_CAP_FALLBACK',
 ] as const;
 
@@ -97,7 +101,7 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   ACCESS_ACCOUNT_ID: '',
   ACCESS_LIST_ID: '',
   ALLOW_ADMIN_NEWSLETTER_CRUD: 'false',
-  FROM_ADDRESS: 'Newsletter <newsletter@yourdomain.com>',
+  FROM_ADDRESS: 'console@yourdomain.com',
   TRACKING_BASE_URL: 'https://track.yourdomain.com',
   // Global default footer. Newsletters with an empty footer inherit these.
   // {{unsubscribe_url}} is always honoured; if a footer omits it the consumer
@@ -114,6 +118,7 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
     'You are receiving this email because you subscribed to {{newsletter_name}}.\n' +
     'Unsubscribe: {{unsubscribe_url}}',
   TRACKING_ENABLED: 'true',
+  TURNSTILE_ENABLED: 'true',
   // Empty by default: set the Turnstile site key from the Settings page once the
   // widget exists. Empty means the public signup page is unavailable.
   TURNSTILE_SITE_KEY: '',
@@ -128,7 +133,9 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   RETENTION_DAYS: '90',
   HARD_BOUNCE_THRESHOLD: '1',
   SOFT_BOUNCE_THRESHOLD: '5',
-  WARMUP_SCHEDULE: '[500, 1500, 5000, 12000, 25000, 40000]',
+  WARMUP_MIN_DAILY: '500',
+  WARMUP_MAX_DAILY: '50000',
+  WARMUP_DAYS: '30',
   DAILY_CAP_FALLBACK: '1000',
 };
 

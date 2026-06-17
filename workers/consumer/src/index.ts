@@ -20,7 +20,7 @@ import type { QueueMessage } from '../../../shared/types';
 import {
   readWarmupConfig,
   progressWarmup,
-  weeklyCapForLevel,
+  dailyCapForDay,
   normalizeDailyCap,
   dayStartSql,
   delayUntilNextWindow,
@@ -82,31 +82,28 @@ export default {
     let state = await loadWarmupState(env.DB);
     const dailyCap = await ensureDailyCap(env, state, todayStr, cfg);
 
-    // Demand-driven progression: advance at most one level per 7-day window,
-    // and only when the backlog has grown to the next level's threshold.
+    // Demand-driven progression: advance one warmup day per calendar day when
+    // there is demand, staying put when the queue is empty.
     const demand = await computeDemand(env.DB);
     const prog = progressWarmup(state, demand, now, cfg);
     if (prog.changed) {
       const won = await advanceWarmupState(
         env.DB,
-        { level: prog.level, weekStartedAt: prog.weekStartedAt },
-        state.weekStartedAt,
+        { day: prog.day, dayStartedAt: prog.dayStartedAt },
+        state.dayStartedAt,
       );
       state = won
-        ? { ...state, level: prog.level, weekStartedAt: prog.weekStartedAt }
+        ? { ...state, day: prog.day, dayStartedAt: prog.dayStartedAt }
         : await loadWarmupState(env.DB);
     }
 
-    const weeklyCap = weeklyCapForLevel(cfg, state.level);
+    const warmupDailyCap = dailyCapForDay(state.day, cfg);
     const dayStart = dayStartSql(now);
-    const weekStart = state.weekStartedAt ?? dayStart;
-    const weekStartMs = Date.parse(weekStart.replace(' ', 'T') + 'Z');
-    const [sentToday, sentThisWeek] = await Promise.all([
-      countSentSince(env.DB, dayStart),
-      countSentSince(env.DB, weekStart),
-    ]);
-    let dailyRemaining = Math.max(0, dailyCap - sentToday);
-    let weeklyRemaining = Math.max(0, weeklyCap - sentThisWeek);
+    const sentToday = await countSentSince(env.DB, dayStart);
+    // Effective daily budget: the smaller of the warmup ramp cap and the
+    // Cloudflare account quota (read from the API once per UTC day).
+    const effectiveDailyCap = Math.min(warmupDailyCap, dailyCap);
+    let dailyRemaining = Math.max(0, effectiveDailyCap - sentToday);
 
     for (const msg of batch.messages) {
       const { campaignId, batch: recipients } = msg.body;
@@ -119,25 +116,24 @@ export default {
         detail: { recipients: recipients.length },
       });
 
-      // Warmup gate: if no capacity, re-queue with delay until next window.
-      const remaining = Math.min(dailyRemaining, weeklyRemaining);
-      if (remaining <= 0) {
-        const delaySeconds = delayUntilNextWindow(weekStartMs, weeklyRemaining, now);
+      // Warmup gate: if no daily capacity, re-queue until next UTC midnight.
+      if (dailyRemaining <= 0) {
+        const delaySeconds = delayUntilNextWindow(now);
         await writeLog(env.DB, {
           level: 'warn',
           source: 'consumer',
           event: 'consumer.throttled',
           campaignId,
           message: `Warmup cap reached — batch re-queued for ${delaySeconds}s`,
-          detail: { delaySeconds, dailyRemaining, weeklyRemaining, level: state.level, weeklyCap, dailyCap },
+          detail: { delaySeconds, dailyRemaining, warmupDailyCap, dailyCap, day: state.day },
         });
         msg.retry({ delaySeconds });
         continue;
       }
       // Partial capacity: split this message and re-enqueue the remainder.
-      if (recipients.length > remaining) {
-        const overflow = recipients.splice(remaining);
-        const delaySeconds = delayUntilNextWindow(weekStartMs, weeklyRemaining - remaining, now);
+      if (recipients.length > dailyRemaining) {
+        const overflow = recipients.splice(dailyRemaining);
+        const delaySeconds = delayUntilNextWindow(now);
         await env.QUEUE.send(
           { campaignId, batch: overflow },
           { delaySeconds },
@@ -147,7 +143,7 @@ export default {
           event: 'consumer.split',
           campaignId,
           message: `Partial warmup capacity — sending ${recipients.length}, deferred ${overflow.length} for ${delaySeconds}s`,
-          detail: { sending: recipients.length, deferred: overflow.length, delaySeconds },
+          detail: { sending: recipients.length, deferred: overflow.length, delaySeconds, day: state.day },
         });
       }
 
@@ -263,7 +259,6 @@ export default {
             });
             // Track warmup consumption for subsequent messages in this batch.
             dailyRemaining--;
-            weeklyRemaining--;
           } catch (err) {
             await recordSendFailure(env.DB, campaignId, r.subscriberId, (err as Error).message);
             failedInBatch++;
