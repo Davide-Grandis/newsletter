@@ -3,8 +3,11 @@ main = "src/index.ts"
 compatibility_date = "2025-01-15"
 compatibility_flags = ["nodejs_compat"]
 
-# Bounce thresholds resolve from the D1 `settings` table, falling back to the
-# built-in defaults in shared/settings.ts.
+# Bounce thresholds and schedule settings resolve from the D1 `settings` table,
+# falling back to the built-in defaults in shared/settings.ts.
+#
+# CF_API_TOKEN is required for the GraphQL delivery-failure sync.
+# Set via: wrangler secret put CF_API_TOKEN
 
 [[d1_databases]]
 binding = "DB"
@@ -15,6 +18,10 @@ database_id = "REPLACE_WITH_D1_ID"
 binding = "ARCHIVE"
 bucket_name = "newsletter-archive"
 
-# Email Routing rule (configured in the Cloudflare dashboard, on the sending
-# domain — i.e. the BASE_DOMAIN setting; there is no separate bounce domain):
-#   bounce+*@yourdomain.com  -> Worker `newsletter-bounce`
+# Runs every 30 minutes. Each tick processes due post-send bounce-check bursts
+# and runs the daily delivery-failure sync at 04:00 UTC.
+[triggers]
+crons = ["*/30 * * * *"]
+
+# Email Routing rule (configured in the Cloudflare dashboard):
+#   catch-all (or unsubscribe+*@yourdomain.com)  -> Worker `newsletter-bounce`  (one-click unsub)

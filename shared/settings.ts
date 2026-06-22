@@ -33,8 +33,6 @@ export const SETTING_KEYS = [
   // by the read-only/edit capability.)
   'ALLOW_ADMIN_NEWSLETTER_CRUD',
   // -- Sending identity --
-  // (Bounce/return-path traffic uses BASE_DOMAIN; there is no separate
-  // bounce domain setting.)
   'FROM_ADDRESS',
   'TRACKING_BASE_URL',
   // Global default email footer (HTML + plain text). A newsletter's own footer
@@ -65,6 +63,13 @@ export const SETTING_KEYS = [
   // -- Bounce handling --
   'HARD_BOUNCE_THRESHOLD',
   'SOFT_BOUNCE_THRESHOLD',
+  // Rolling window (days) over which soft bounces accumulate. A soft bounce
+  // older than this resets the soft counter, so transient failures self-heal.
+  'SOFT_BOUNCE_WINDOW_DAYS',
+  // After a campaign sends, the bounce worker runs a fixed burst of zone-wide
+  // delivery-failure syncs (18 checks, 10 min apart ≈ 3 h) plus a daily safety
+  // net. These cadences are hard-coded constants in the bounce worker, not
+  // settings, since the GraphQL query is zone-wide (not per-campaign).
   // -- Warmup --
   // Warmup is always on and demand-driven (no start date). The daily cap follows
   // a geometric ramp from WARMUP_MIN_DAILY (day 1) to WARMUP_MAX_DAILY (day
@@ -109,9 +114,9 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   // optional personalisation tokens.
   DEFAULT_FOOTER_HTML:
     '<hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0 12px">\n' +
-    '<p style="font-size:12px;line-height:1.5;color:#64748b;margin:0">\n' +
+    '<p style="font-size:14px;line-height:2.0;color:#64748b;margin:0">\n' +
     'You are receiving this email because you subscribed to {{newsletter_name}}.<br>\n' +
-    '<a href="{{unsubscribe_url}}" style="color:#64748b">Unsubscribe</a> at any time.\n' +
+    'Click here to <a href="{{unsubscribe_url}}" style="color:#64748b">unsubscribe</a>.\n' +
     '</p>',
   DEFAULT_FOOTER_TEXT:
     '--\n' +
@@ -133,6 +138,7 @@ export const SETTINGS_DEFAULTS: Record<SettingKey, string> = {
   RETENTION_DAYS: '90',
   HARD_BOUNCE_THRESHOLD: '1',
   SOFT_BOUNCE_THRESHOLD: '5',
+  SOFT_BOUNCE_WINDOW_DAYS: '30',
   WARMUP_MIN_DAILY: '500',
   WARMUP_MAX_DAILY: '50000',
   WARMUP_DAYS: '30',

@@ -14,7 +14,7 @@
 import { EmailMessage } from 'cloudflare:email';
 import {
   readWarmupConfig,
-  dailyCapForDay,
+  appliedDailyCap,
   dayStartSql,
   type WarmupState,
 } from '../../../shared/warmup';
@@ -37,6 +37,7 @@ export interface Env {
   // under /media/*. The whole worker sits behind Cloudflare Access, so
   // these objects are only reachable by authenticated operators.
   ASSETS_R2: R2Bucket;
+  ARCHIVE: R2Bucket;
   // Warmup settings — kept in sync with the consumer worker so the admin GUI
   // can show the weekly schedule and current progression.
   WARMUP_SCHEDULE?: string;
@@ -583,21 +584,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     }
     if (stmts.length > 0) await rawEnv.DB.batch(stmts);
 
-    // When the sending domain is (re)set, make sure the bounce catch-all rule
-    // (bounce@<domain> → bounce worker) exists on its zone, so VERP bounces are
-    // handled without manual dashboard setup. Best-effort: surfaced as a
-    // warning, never blocks the save.
-    let routing_warning: string | undefined;
-    if (domainEntry && resolvedZoneId) {
-      const nextEnv = {
-        ...env,
-        BASE_DOMAIN: domainEntry[1].trim().toLowerCase(),
-        EMAIL_ROUTING_ZONE_ID: resolvedZoneId,
-      } as Env;
-      routing_warning = await ensureBounceRule(nextEnv);
-    }
-
-    return Response.json({ ok: true, changed: toSet.length, cleared: toDelete.length, routing_warning });
+    return Response.json({ ok: true, changed: toSet.length, cleared: toDelete.length });
   }
 
   // Lists the Cloudflare zones (domains) in the account so the Settings page can
@@ -946,7 +933,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
   // -------- newsletters --------
 
   if (m === 'GET' && p === '/api/newsletters') {
-    const limit = clamp(Number(url.searchParams.get('limit') ?? '20'), 1, 200);
+    const limit = clamp(Number(url.searchParams.get('limit') ?? '20'), 1, 1000);
     const offset = Math.max(0, Number(url.searchParams.get('cursor') ?? '0') || 0);
     // Admins only see the newsletters they are assigned to; super admins see all.
     if (!isSuper && auth.newsletterIds.length === 0) {
@@ -1487,6 +1474,10 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         const bouncesParam = url.searchParams.get('bounces');
         if (bouncesParam === '0') where.push('bounce_count = 0');
         else if (bouncesParam === 'gt0') where.push('bounce_count > 0');
+        else if (bouncesParam === 'hard' || bouncesParam === 'soft' || bouncesParam === 'block') {
+          where.push('last_bounce_type = ?');
+          binds.push(bouncesParam);
+        }
         if (q) {
           where.push('(email LIKE ? OR name LIKE ?)');
           const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
@@ -1496,7 +1487,9 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         const [page, count] = await Promise.all([
           env.DB
             .prepare(
-              `SELECT id, email, name, verified, status, bounce_count, subscribed_at FROM subscribers ` +
+              `SELECT id, email, name, verified, status, bounce_count, ` +
+                `hard_bounce_count, soft_bounce_count, last_bounce_type, last_bounce_code, last_bounce_at, ` +
+                `subscribed_at FROM subscribers ` +
                 `${whereSql} ORDER BY ${sortCol} ${sortDir} LIMIT ? OFFSET ?`,
             )
             .bind(...binds, limit, offset)
@@ -1545,27 +1538,38 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       const bouncesParam = url.searchParams.get('bounces');
       if (bouncesParam === '0') where.push('bounce_count = 0');
       else if (bouncesParam === 'gt0') where.push('bounce_count > 0');
+      else if (bouncesParam === 'hard' || bouncesParam === 'soft' || bouncesParam === 'block') {
+        where.push('last_bounce_type = ?');
+        binds.push(bouncesParam);
+      }
       if (q) {
         where.push('(email LIKE ? OR name LIKE ?)');
         const like = `%${q.replace(/[%_]/g, (c) => '\\' + c)}%`;
         binds.push(like, like);
       }
-      const { results } = await env.DB
-        .prepare(
-          `SELECT email, name, verified, status, bounce_count, subscribed_at FROM subscribers ` +
-            `WHERE ${where.join(' AND ')} ORDER BY email ASC`,
-        )
-        .bind(...binds)
-        .all<{ email: string; name: string | null; verified: number; status: string; bounce_count: number; subscribed_at: string }>();
-      const header = 'Email,Name,Verified,Status,Bounces,Date subscribed';
+      const [{ results }, nlRow] = await Promise.all([
+        env.DB
+          .prepare(
+            `SELECT email, name, verified, status, bounce_count, last_bounce_type, last_bounce_code, subscribed_at FROM subscribers ` +
+              `WHERE ${where.join(' AND ')} ORDER BY email ASC`,
+          )
+          .bind(...binds)
+          .all<{ email: string; name: string | null; verified: number; status: string; bounce_count: number; last_bounce_type: string | null; last_bounce_code: string | null; subscribed_at: string }>(),
+        env.DB.prepare('SELECT name FROM newsletters WHERE id = ?').bind(nid).first<{ name: string }>(),
+      ]);
+      const nlName = nlRow?.name ?? '';
+      const header = 'Newsletter,Email,Name,Verified,Status,Bounces,Last bounce type,Last bounce code,Date subscribed';
       const lines = (results ?? []).map((r) =>
         [
+          nlName,
           r.email,
           r.name ?? '',
           r.verified ? 'True' : 'False',
           r.status,
           String(r.bounce_count ?? 0),
-          r.subscribed_at ?? '',
+          r.last_bounce_type ?? '',
+          r.last_bounce_code ?? '',
+          fmtDate(r.subscribed_at),
         ]
           .map(csvCell)
           .join(','),
@@ -1584,9 +1588,11 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       const text = ct.includes('application/json')
         ? (await req.json<{ csv: string }>()).csv
         : await req.text();
-      // Positional mapping (the header row is always ignored):
-      //   field 1 = email, field 2 = Verified, field 3 = date subscribed.
-      // Name is not present in the import and is left null.
+      // Column detection: read the header row to locate Email, Verified and
+      // Date subscribed by name (case-insensitive). This handles both the full
+      // export format (Newsletter, Email, Name, Verified, …) and any simple
+      // 3-column CSV (email, verified, date). Falls back to positional indices
+      // 0 / 1 / 2 when a header is not recognised.
       // Duplicates (by email, case-insensitive) are skipped, not updated —
       // both against existing rows and within the file itself.
       const existing = await env.DB
@@ -1595,11 +1601,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         .all<{ email: string }>();
       const seen = new Set((existing.results ?? []).map((r) => r.email.toLowerCase()));
       const lines = text.split(/\r?\n/).filter((l) => l.trim().length > 0);
+      const headerCols = splitCsvLine(lines[0] ?? '').map((c) => c.trim().toLowerCase());
+      const fi = (name: string, fallback: number) => { const i = headerCols.indexOf(name); return i >= 0 ? i : fallback; };
+      const eIdx = fi('email', 0);
+      const nIdx = headerCols.indexOf('name');
+      const vIdx = fi('verified', 1);
+      const dIdx = fi('date subscribed', 2);
       let added = 0;
       let duplicated = 0;
       for (const line of lines.slice(1)) {
         const cols = splitCsvLine(line);
-        const email = (cols[0] ?? '').trim();
+        const email = (cols[eIdx] ?? '').trim();
         if (!email) continue;
         const key = email.toLowerCase();
         if (seen.has(key)) {
@@ -1607,16 +1619,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
           continue;
         }
         seen.add(key);
-        const verified = parseBool(cols[1]) ? 1 : 0;
-        const subscribedAt = (cols[2] ?? '').trim();
+        const name = nIdx >= 0 ? ((cols[nIdx] ?? '').trim() || null) : null;
+        const verified = parseBool(cols[vIdx]) ? 1 : 0;
+        const subscribedAt = fmtDate((cols[dIdx] ?? '').trim());
         const token = crypto.randomUUID();
         await env.DB
           .prepare(
             "INSERT INTO subscribers (newsletter_id, email, name, verified, subscribed_at, token) " +
-              "VALUES (?, ?, NULL, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?) " +
+              "VALUES (?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')), ?) " +
               "ON CONFLICT(newsletter_id, email) DO NOTHING",
           )
-          .bind(nid, email, verified, subscribedAt, token)
+          .bind(nid, email, name, verified, subscribedAt, token)
           .run();
         added++;
       }
@@ -1699,7 +1712,19 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         if (body.status) {
           sets.push('status = ?');
           binds.push(body.status);
-          if (body.status === 'unsubscribed') sets.push("unsubscribed_at = datetime('now')");
+          if (body.status === 'unsubscribed') { sets.push("unsubscribed_at = datetime('now')"); sets.push('verified = 0'); }
+          // Re-activating clears the bounce history so a stale hard/soft count
+          // doesn't immediately disable the address again on the next send.
+          if (body.status === 'active') {
+            sets.push(
+              'bounce_count = 0',
+              'hard_bounce_count = 0',
+              'soft_bounce_count = 0',
+              'last_bounce_type = NULL',
+              'last_bounce_code = NULL',
+              'last_bounce_at = NULL',
+            );
+          }
         }
         if (sets.length === 0) return Response.json({ error: 'no fields' }, { status: 400 });
         binds.push(id, nid);
@@ -1741,7 +1766,8 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
         .prepare(
           `SELECT c.id, c.newsletter_id, n.name AS newsletter_name, c.subject, c.status, ` +
             `c.total_recipients, c.sent_count, c.failed_count, ` +
-            `c.attachment_count, c.link_mode, c.created_at ` +
+            `c.attachment_count, c.link_mode, c.created_at, ` +
+            `(SELECT COUNT(*) FROM sends s WHERE s.campaign_id = c.id AND s.status = 'bounced') AS bounce_count ` +
             `FROM campaigns c LEFT JOIN newsletters n ON n.id = c.newsletter_id ` +
             `${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
         )
@@ -1864,6 +1890,15 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       if (camp.status === 'sending') {
         return Response.json({ error: 'cannot delete a campaign that is still sending' }, { status: 409 });
       }
+      // Delete R2 objects before cascade removes the attachment rows.
+      const atts = await env.DB
+        .prepare('SELECT r2_key FROM attachments WHERE campaign_id = ?')
+        .bind(id)
+        .all<{ r2_key: string }>();
+      for (const a of atts.results ?? []) {
+        await env.ARCHIVE.delete(a.r2_key).catch(() => {});
+      }
+      await env.ARCHIVE.delete(`campaigns/${id}/raw.eml`).catch(() => {});
       // attachments/sends/events cascade via ON DELETE CASCADE; logs do not.
       await env.DB.batch([
         env.DB.prepare('DELETE FROM logs WHERE campaign_id = ?').bind(id),
@@ -1907,8 +1942,8 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     const [page, count] = await Promise.all([
       env.DB
         .prepare(
-          `SELECT e.id, e.campaign_id, e.subscriber_id, sub.email, e.url AS status_code, e.ts ` +
-            `FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id ` +
+          `SELECT e.id, e.campaign_id, e.subscriber_id, sub.email, e.url AS status_code, e.ts, c.subject AS campaign_subject ` +
+            `FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id LEFT JOIN campaigns c ON c.id = e.campaign_id ` +
             `${whereSql} ORDER BY e.ts DESC LIMIT ? OFFSET ?`,
         )
         .bind(...sinceBind, ...nlBind, limit, offset)
@@ -1927,7 +1962,51 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     });
   }
 
+  if (m === 'GET' && p === '/api/bounces/export') {
+    const EXPORT_CAP = 100000;
+    const since = url.searchParams.get('since') ?? "datetime('now','-7 days')";
+    const sinceExpr = since.startsWith('datetime') ? since : '?';
+    const sinceBind = since.startsWith('datetime') ? [] : [since];
+    let nlScope = '';
+    const nlBind: string[] = [];
+    if (!isSuper) {
+      if (auth.newsletterIds.length === 0) {
+        return new Response('Time,Email,Status Code,Campaign Subject,Campaign ID\r\n', {
+          headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="bounces-${new Date().toISOString().slice(0, 10)}.csv"` },
+        });
+      }
+      nlScope = ` AND e.campaign_id IN (SELECT id FROM campaigns WHERE newsletter_id IN (${inPlaceholders(auth.newsletterIds.length)}))`;
+      nlBind.push(...auth.newsletterIds);
+    }
+    const { results } = await env.DB
+      .prepare(
+        'SELECT sub.email, e.url AS status_code, e.ts, e.campaign_id, c.subject AS campaign_subject ' +
+          'FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id LEFT JOIN campaigns c ON c.id = e.campaign_id ' +
+          `WHERE e.type = 'bounce' AND e.ts > ${sinceExpr}${nlScope} ORDER BY e.ts DESC LIMIT ?`,
+      )
+      .bind(...sinceBind, ...nlBind, EXPORT_CAP)
+      .all<{ email: string | null; status_code: string | null; ts: string; campaign_id: string; campaign_subject: string | null }>();
+    const header = 'Time,Email,Status Code,Campaign Subject,Campaign ID';
+    const lines = (results ?? []).map((r) =>
+      [r.ts ?? '', r.email ?? '', r.status_code ?? '', r.campaign_subject ?? '', r.campaign_id ?? '']
+        .map(csvCell)
+        .join(','),
+    );
+    const csv = [header, ...lines].join('\r\n') + '\r\n';
+    const stamp = new Date().toISOString().slice(0, 10);
+    return new Response(csv, {
+      headers: {
+        'content-type': 'text/csv; charset=utf-8',
+        'content-disposition': `attachment; filename="bounces-${stamp}.csv"`,
+      },
+    });
+  }
+
   // -------- logs --------
+  //
+  // Level hierarchy: debug < info < warn < error. A "minLevel" filter returns
+  // the selected level and every level above it.
+  const LEVEL_ORDER = ['debug', 'info', 'warn', 'error'];
   //
   // Unified, searchable activity feed merging the pipeline `logs` table
   // (ingest -> queue -> consumer) with recipient engagement `events`
@@ -1950,7 +2029,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       "SELECT 'event' AS kind, e.id AS id, e.ts AS ts, " +
         "CASE WHEN e.type IN ('bounce','complaint') THEN 'warn' ELSE 'info' END AS level, " +
         "CASE WHEN e.type IN ('bounce','complaint') THEN 'bounce' ELSE 'tracker' END AS source, " +
-        'e.type AS event, e.campaign_id AS campaign_id, NULL AS newsletter_id, ' +
+        'e.type AS event, e.campaign_id AS campaign_id, sub.newsletter_id AS newsletter_id, ' +
         'e.subscriber_id AS subscriber_id, sub.email AS email, NULL AS message, e.url AS detail ' +
         'FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id';
 
@@ -1961,15 +2040,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       binds.push(source);
     }
     if (level) {
-      conds.push('f.level = ?');
-      binds.push(level);
+      const idx = LEVEL_ORDER.indexOf(level);
+      const levels = idx >= 0 ? LEVEL_ORDER.slice(idx) : [level];
+      conds.push(`f.level IN (${levels.map(() => '?').join(',')})`);
+      binds.push(...levels);
     }
     if (q) {
       const like = `%${q}%`;
       conds.push(
-        '(f.event LIKE ? OR f.message LIKE ? OR f.campaign_id LIKE ? OR f.email LIKE ? OR f.detail LIKE ? OR n.name LIKE ?)',
+        '(f.event LIKE ? OR f.message LIKE ? OR f.campaign_id LIKE ? OR f.email LIKE ? OR f.detail LIKE ? OR n.name LIKE ? OR c.subject LIKE ?)',
       );
-      binds.push(like, like, like, like, like, like);
+      binds.push(like, like, like, like, like, like, like);
     }
     // Confine admins to activity on their own newsletters (resolved via the
     // log's own newsletter_id or, failing that, the campaign's).
@@ -2023,7 +2104,7 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       "SELECT 'event' AS kind, e.id AS id, e.ts AS ts, " +
         "CASE WHEN e.type IN ('bounce','complaint') THEN 'warn' ELSE 'info' END AS level, " +
         "CASE WHEN e.type IN ('bounce','complaint') THEN 'bounce' ELSE 'tracker' END AS source, " +
-        'e.type AS event, e.campaign_id AS campaign_id, NULL AS newsletter_id, ' +
+        'e.type AS event, e.campaign_id AS campaign_id, sub.newsletter_id AS newsletter_id, ' +
         'e.subscriber_id AS subscriber_id, sub.email AS email, NULL AS message, e.url AS detail ' +
         'FROM events e LEFT JOIN subscribers sub ON sub.id = e.subscriber_id';
 
@@ -2034,15 +2115,17 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
       binds.push(source);
     }
     if (level) {
-      conds.push('f.level = ?');
-      binds.push(level);
+      const idx = LEVEL_ORDER.indexOf(level);
+      const levels = idx >= 0 ? LEVEL_ORDER.slice(idx) : [level];
+      conds.push(`f.level IN (${levels.map(() => '?').join(',')})`);
+      binds.push(...levels);
     }
     if (q) {
       const like = `%${q}%`;
       conds.push(
-        '(f.event LIKE ? OR f.message LIKE ? OR f.campaign_id LIKE ? OR f.email LIKE ? OR f.detail LIKE ? OR n.name LIKE ?)',
+        '(f.event LIKE ? OR f.message LIKE ? OR f.campaign_id LIKE ? OR f.email LIKE ? OR f.detail LIKE ? OR n.name LIKE ? OR c.subject LIKE ?)',
       );
-      binds.push(like, like, like, like, like, like);
+      binds.push(like, like, like, like, like, like, like);
     }
     // Confine admins to activity on their own newsletters (same rule as the
     // paginated feed above).
@@ -2079,13 +2162,13 @@ async function handleApi(req: Request, rawEnv: Env, url: URL): Promise<Response>
     // Mirror the table columns, with Campaign ID inserted right after the
     // campaign name. Description matches the table: the log message, or for
     // engagement events the recipient email and event detail.
-    const header = 'Time (UTC),Level,Newsletter,Campaign,Campaign ID,Source,Event,Description';
+    const header = 'Time,Level,Newsletter,Campaign,Campaign ID,Source,Event,Description';
     const lines = (results ?? []).map((r) => {
       const description =
         r.message ??
         (r.kind === 'event' ? [r.email, r.detail].filter(Boolean).join(' — ') : '');
       return [
-        r.ts ?? '',
+        fmtDate(r.ts),
         r.level ?? '',
         r.newsletter_name ?? '',
         r.campaign_subject ?? '',
@@ -2317,7 +2400,7 @@ async function emailSendingStats(env: Env): Promise<{
       day: wstate.day,
       started: wstate.day !== null,
       dayStartedAt: wstate.dayStartedAt,
-      warmupDailyCap: dailyCapForDay(wstate.day, cfg),
+      warmupDailyCap: appliedDailyCap(wstate.day, cfg),
       minDaily: cfg.minDaily,
       maxDaily: cfg.maxDaily,
       totalDays: cfg.totalDays,
@@ -2532,40 +2615,6 @@ async function deleteRoutingRule(env: Env, addr: string): Promise<string | undef
     return undefined;
   } catch (e) {
     return `Email Routing rule not deleted: ${(e as Error).message}`;
-  }
-}
-
-// The bounce worker's script name. VERP return-paths are bounce+<id>@<domain>;
-// with Email Routing subaddressing enabled they are matched by a single literal
-// rule for bounce@<domain>, so we maintain exactly that rule on the sending
-// domain's zone.
-const BOUNCE_WORKER_NAME = 'newsletter-bounce';
-
-function bounceRuleBody(env: Env, addr: string): string {
-  return JSON.stringify({
-    name: `bounce:${addr}`,
-    enabled: true,
-    matchers: [{ type: 'literal', field: 'to', value: addr }],
-    actions: [{ type: 'worker', value: [BOUNCE_WORKER_NAME] }],
-  });
-}
-
-// Ensures the bounce catch-all rule (bounce@<BASE_DOMAIN> → bounce worker)
-// exists on the sending domain's zone. Idempotent and best-effort: returns a
-// human-readable warning instead of throwing. Called whenever the sending
-// domain is saved so bounce handling tracks the domain automatically.
-async function ensureBounceRule(env: Env): Promise<string | undefined> {
-  if (!env.BASE_DOMAIN) return undefined;
-  if (!routingReady(env)) {
-    return `Email Routing not configured — add the bounce rule (bounce@${env.BASE_DOMAIN} → ${BOUNCE_WORKER_NAME}) manually.`;
-  }
-  const addr = `bounce@${env.BASE_DOMAIN}`.toLowerCase();
-  try {
-    if (await findRoutingRuleId(env, addr)) return undefined; // already present
-    await cfJson(env, routingRulesPath(env), { method: 'POST', body: bounceRuleBody(env, addr) });
-    return undefined;
-  } catch (e) {
-    return `Bounce Email Routing rule not created: ${(e as Error).message}`;
   }
 }
 
@@ -2801,6 +2850,12 @@ function clamp(n: number, lo: number, hi: number): number {
 // Quote a CSV field if it contains a comma, quote, or newline (RFC 4180).
 function csvCell(value: string): string {
   return /[",\r\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+// Normalise a SQLite datetime ("YYYY-MM-DD HH:MM:SS") to ISO "YYYY-MM-DDTHH:MMZ".
+function fmtDate(s: string | null | undefined): string {
+  if (!s) return '';
+  return s.replace(' ', 'T').slice(0, 16) + 'Z';
 }
 
 // Split a single CSV line into fields, honouring RFC-4180 double-quoting

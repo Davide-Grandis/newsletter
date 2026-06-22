@@ -3,6 +3,7 @@ import { loadSettings } from '../../../shared/settings';
 export interface Env {
   DB: D1Database;
   ARCHIVE: R2Bucket;
+  // Overlaid by loadSettings from D1/defaults at runtime:
   RETENTION_DAYS: string;
 }
 
@@ -13,7 +14,6 @@ export default {
 };
 
 async function runRetention(rawEnv: Env): Promise<void> {
-  // Resolve tunables against the D1 `settings` table (env/defaults fallback).
   const env = await loadSettings(rawEnv.DB, rawEnv);
   const days = Math.max(1, Number(env.RETENTION_DAYS));
   const cutoff = `datetime('now', '-${days} days')`;

@@ -86,8 +86,6 @@ const TABS: Tab[] = [
     title: 'Sending identity',
     description:
       'The domain and address used for all outgoing emails.',
-    note:
-      'One-time setup: enable Email Routing "Subaddressing" for the sending domain in the Cloudflare dashboard (Compute \u2192 Email Service \u2192 Email Routing \u2192 Settings). It cannot be toggled via API. It lets the auto-created bounce@<domain> rule capture VERP bounce addresses (bounce+<id>@<domain>); without it, bounce handling will not work.',
     fields: [
       { key: 'BASE_DOMAIN', label: 'Sending domain', help: 'The Cloudflare domain name for the Email Sending service. It represents the domain for used for sending and receiving emails.', hideKey: true, hideSource: true, optionsFrom: 'sending-domains' },
       { key: 'FROM_ADDRESS', label: 'Sender address', help: 'The From: address used for outgoing emails (console notifications and newsletters without a per-newsletter sender). Must be a local part on the sending domain above.', hideKey: true, hideSource: true, splitAt: true },
@@ -158,7 +156,7 @@ const TABS: Tab[] = [
     note:
       'Tokens you can use: {{unsubscribe_url}}, {{newsletter_name}}, {{email}}. An unsubscribe link is always included even if you omit the token.',
     fields: [
-      { key: 'DEFAULT_FOOTER_HTML', label: 'HTML footer', help: 'HTML appended to the end of every email body (after tracking instrumentation, so its links are not click-tracked).', type: 'textarea', hideKey: true, rows: 6, compact: true },
+      { key: 'DEFAULT_FOOTER_HTML', label: 'HTML footer', help: 'HTML appended to the end of every email body.', type: 'textarea', hideKey: true, rows: 6, compact: true },
       { key: 'DEFAULT_FOOTER_TEXT', label: 'Plain-text footer', help: 'Footer appended to the plain-text part of every email.', type: 'textarea', hideKey: true, rows: 6, compact: true },
     ],
   },
@@ -171,9 +169,9 @@ const TABS: Tab[] = [
   {
     title: 'Tracking',
     description:
-      'Open and click tracking transforms outgoing HTML: every link is rewritten to a signed redirect through the tracker worker, and an invisible 1×1 pixel is appended to detect opens. Disable to send links unmodified and omit the pixel — opens and clicks will then not be recorded. Large-attachment download links are unaffected, since they deliver the files themselves.',
+      'Tracking transforms outgoing HTML. Disable to send the emails unmodified, no tracking analytics will be available.',
     fields: [
-      { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added. When off, recipients get your original links and no pixel; the Analytics page will show no opens/clicks for new sends.', type: 'boolean', hideKey: true, hideOverride: true },
+      { key: 'TRACKING_ENABLED', label: 'Open & click tracking', help: 'When on, links are rewritten through the tracker and an open pixel is added.', type: 'boolean', hideKey: true, hideOverride: true },
       { key: 'TRACKING_BASE_URL', label: 'Tracking base URL', help: 'Base URL of the tracker worker for opens, clicks, unsubscribe and downloads.', hideKey: true, hideSource: true, splitUrl: true, placeholder: 'track' },
     ],
   },
@@ -181,8 +179,9 @@ const TABS: Tab[] = [
     title: 'Bounce handling',
     description: 'When the bounce worker marks a subscriber as bounced.',
     fields: [
-      { key: 'HARD_BOUNCE_THRESHOLD', label: 'Hard bounce threshold', help: 'Hard bounces before a subscriber is marked bounced.', type: 'number' },
-      { key: 'SOFT_BOUNCE_THRESHOLD', label: 'Soft bounce threshold', help: 'Soft bounces before a subscriber is marked bounced.', type: 'number' },
+      { key: 'HARD_BOUNCE_THRESHOLD', label: 'Hard bounce threshold', help: 'Hard bounces (permanent, e.g. mailbox not found) before a subscriber is disabled. 1 = disable on first hard bounce.', type: 'number', hideKey: true },
+      { key: 'SOFT_BOUNCE_THRESHOLD', label: 'Soft bounce threshold', help: 'Soft bounces (transient, e.g. full mailbox) within the window before a subscriber is disabled.', type: 'number', hideKey: true },
+      { key: 'SOFT_BOUNCE_WINDOW_DAYS', label: 'Soft bounce window (days)', help: 'Soft bounces older than this no longer count, so transient failures self-heal.', type: 'number', hideKey: true },
     ],
   },
     ],
@@ -211,7 +210,7 @@ const TABS: Tab[] = [
     description:
       'A daily cron permanently deletes campaigns older than this, together with their stored attachments and archived raw email (from R2) and their send/engagement history (from the database). After deletion the data is gone: attachment download links return \u201cnot found\u201d, the campaign disappears from Analytics, and open/click redirects no longer record anything (the click redirect itself still forwards to the destination).',
     fields: [
-      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before permanent deletion. Lower values free storage sooner but make older attachment links and analytics unavailable.', type: 'number' },
+      { key: 'RETENTION_DAYS', label: 'Retention (days)', help: 'Days to keep campaigns, attachments and raw archives before permanent deletion. Lower values free storage sooner but make older attachment links and analytics unavailable.', type: 'number', hideKey: true },
     ],
   },
     ],
@@ -298,7 +297,6 @@ export default function Settings() {
       setEditKey(null);
       setFieldError(null);
       setSavedKey(key);
-      // Domain-level bounce-rule sync warning (best-effort), if any.
       setSaveWarn(data?.routing_warning ?? null);
       setTimeout(() => setSavedKey((k) => (k === key ? null : k)), 2500);
       await qc.invalidateQueries({ queryKey: ['settings'] });
@@ -422,16 +420,11 @@ export default function Settings() {
               return (
                 <Fragment key={f.key}>
                 <div
-                  className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_auto] gap-2 sm:gap-4 items-start"
+                  className="px-4 py-3 grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)_6rem] gap-2 sm:gap-4 items-start"
                 >
                   <div className="min-w-0">
                     <label htmlFor={f.key} className="text-sm font-medium flex items-center gap-2 flex-wrap">
                       {f.label}
-                      {/* Booleans show the badge beside their value instead; some
-                          fields (no default) hide it entirely. */}
-                      {s && !f.hideSource && !f.sourceBelow && f.type !== 'boolean' && (
-                        <SourceBadge source={s.source} editing={editing} />
-                      )}
                     </label>
                     <p className="text-xs text-slate-500 mt-0.5 dark:text-slate-400">{f.help}</p>
                     {!f.hideKey && (
@@ -549,7 +542,7 @@ export default function Settings() {
                     )}
                     <div className="flex items-center gap-3 mt-1 text-[11px] text-slate-400 dark:text-slate-500">
                       {bytes && <span>{bytes}</span>}
-                      {s && !f.hideSource && f.sourceBelow && f.type !== 'boolean' && (
+                      {s && !f.hideSource && f.type !== 'boolean' && (
                         <SourceBadge source={s.source} editing={editing} />
                       )}
                       {s && s.source === 'db' && f.type !== 'boolean' && !f.hideSource && !f.hideOverride && (
@@ -621,14 +614,14 @@ export default function Settings() {
                     )}
                   </div>
 
-                  {f.type !== 'boolean' && <div className="flex items-center gap-2 justify-start sm:justify-end">
+                  {f.type !== 'boolean' && <div className="flex flex-col gap-1.5">
                     {f.readOnly ? null : editing ? (
                       <>
                         <button
                           type="button"
                           onClick={() => saveField(f.key)}
                           disabled={!changed || save.isPending}
-                          className="bg-slate-900 text-white text-xs rounded px-3 py-1.5 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
+                          className="w-full bg-slate-900 text-white text-xs rounded px-3 py-1.5 disabled:opacity-40 dark:bg-slate-100 dark:text-slate-900"
                         >
                           {save.isPending ? 'Saving…' : 'Save'}
                         </button>
@@ -636,7 +629,7 @@ export default function Settings() {
                           type="button"
                           onClick={cancelEdit}
                           disabled={save.isPending}
-                          className="text-xs rounded px-3 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
+                          className="w-full text-xs rounded px-3 py-1.5 border border-slate-300 text-slate-600 hover:bg-slate-100 dark:border-slate-600 dark:text-slate-300 dark:hover:bg-slate-800"
                         >
                           Cancel
                         </button>
@@ -647,7 +640,7 @@ export default function Settings() {
                           type="button"
                           onClick={() => startEdit(f.key)}
                           disabled={editKey !== null || (!!f.enabledBy && effective(f.enabledBy) === 'false')}
-                          className="text-xs rounded px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                          className="w-full text-xs rounded px-3 py-1.5 border border-slate-300 text-slate-700 hover:bg-slate-100 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
                         >
                           Edit
                         </button>
@@ -657,7 +650,7 @@ export default function Settings() {
                             onClick={() => resetField(f.key)}
                             disabled={editKey !== null || save.isPending}
                             title="Clear the override and revert to the default value"
-                            className="text-xs rounded px-3 py-1.5 text-slate-500 hover:text-red-600 disabled:opacity-40 dark:text-slate-400"
+                            className="w-full text-xs rounded px-3 py-1.5 text-slate-500 hover:text-red-600 disabled:opacity-40 dark:text-slate-400"
                           >
                             Reset
                           </button>

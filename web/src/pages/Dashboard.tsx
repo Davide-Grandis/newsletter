@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { api, Overview, Page, Campaign, EmailSendingStats } from '../api';
 import { useIdentity } from '../auth';
 import { CampaignStatus } from './Campaigns';
+import { fmtDate } from '../utils/date';
 
 export default function Dashboard() {
   const me = useIdentity();
@@ -13,15 +14,18 @@ export default function Dashboard() {
     queryFn: () => api<EmailSendingStats>('/api/email-sending-stats'),
     enabled: isSuper,
     staleTime: 60_000,
+    refetchInterval: 60_000,
   });
 
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['overview'],
     queryFn: () => api<Overview>('/api/stats/overview'),
+    refetchInterval: 60_000,
   });
   const campaigns = useQuery({
     queryKey: ['overview-campaigns'],
-    queryFn: () => api<Page<Campaign>>('/api/campaigns?limit=12'),
+    queryFn: () => api<Page<Campaign>>('/api/campaigns?limit=5'),
+    refetchInterval: 60_000,
   });
   const refreshing = isFetching || campaigns.isFetching || sending.isFetching;
   const refresh = () => {
@@ -42,12 +46,11 @@ export default function Dashboard() {
   const recentCampaigns = campaigns.data?.items ?? [];
   // With many newsletters the overview shows only the most active ones; the
   // full list lives on the Newsletters page.
-  const TOP_N = 12;
+  const TOP_N = 5;
   const topNls = [...nls]
     .sort(
       (a, b) =>
         b.active - a.active ||
-        b.subscribers - a.subscribers ||
         a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }),
     )
     .slice(0, TOP_N);
@@ -68,19 +71,19 @@ export default function Dashboard() {
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         <Card label="Newsletters" value={nls.length} sub={`${enabledCount} enabled`} />
-        <Card label="Active subscribers" value={subTotals.active ?? 0} sub={`${totalSubs.toLocaleString()} total`} />
         <Card label="Total campaigns" value={data.campaigns?.total ?? 0} sub={`${data.campaigns?.sent ?? 0} sent`} />
+        <Card label="Active subscribers" value={subTotals.active ?? 0} sub={`${totalSubs.toLocaleString()} total`} />
         <Card label="Unsubscribed / bounced" value={(subTotals.unsubscribed ?? 0) + (subTotals.bounced ?? 0)} sub={`${subTotals.bounced ?? 0} bounced`} />
       </div>
 
       <h2 className="text-base font-medium">Events in the last 7 days</h2>
       <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-        <Card label="Opens" value={evt.open ?? 0} />
-        <Card label="Clicks" value={evt.click ?? 0} />
-        <Card label="Bounces" value={evt.bounce ?? 0} />
-        <Card label="New subs" value={evt.subscribe ?? 0} />
-        <Card label="Unsubs" value={evt.unsubscribe ?? 0} />
-        <Card label="Downloads" value={evt.download ?? 0} />
+        <Card label="Open events" value={evt.open ?? 0} />
+        <Card label="Click events" value={evt.click ?? 0} />
+        <Card label="Bounce events" value={evt.bounce ?? 0} />
+        <Card label="Subscribe events" value={evt.subscribe ?? 0} />
+        <Card label="Unsubscribe events" value={evt.unsubscribe ?? 0} />
+        <Card label="Download events" value={evt.download ?? 0} />
       </div>
 
       {isSuper && (
@@ -91,25 +94,33 @@ export default function Dashboard() {
           ) : sending.error ? (
             <div className="text-sm text-red-600">{(sending.error as Error).message}</div>
           ) : sending.data ? (
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-              <Card
-                label="Warm-up daily cap"
-                value={sending.data.warmup.warmupDailyCap}
-                sub={!sending.data.warmup.started ? 'not started' : undefined}
-              />
-              <Card
-                label="Warm-up day"
-                value={`${sending.data.warmup.day ?? 0} / ${sending.data.warmup.totalDays}`}
-                sub={!sending.data.warmup.started ? 'not started' : undefined}
-              />
-              <Card
-                label="Email daily quota"
-                value={sending.data.quota?.value ?? 0}
-                sub={!sending.data.quota ? (sending.data.quota_error ? 'unavailable' : 'not assigned') : undefined}
-              />
-              <Card label="Sent today" value={sending.data.today} />
-              <Card label="Backlog" value={sending.data.warmup.demand} />
-            </div>
+            (() => {
+              const w = sending.data.warmup;
+              const warmupDone = (w.day ?? 0) >= w.totalDays;
+              return (
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                  <Card
+                    label="Email daily quota"
+                    value={sending.data.quota?.value ?? 0}
+                    sub={!sending.data.quota ? (sending.data.quota_error ? 'unavailable' : 'not assigned') : undefined}
+                  />
+                  <Card label="Sent today" value={sending.data.today} />
+                  <Card label="Backlog" value={w.demand} />
+                  <Card
+                    label="Warm-up daily cap"
+                    value={w.warmupDailyCap}
+                    sub={`day ${w.day ?? 0}`}
+                    dimmed={warmupDone}
+                  />
+                  <Card
+                    label="Warm-up day"
+                    value={`${w.day ?? 0} / ${w.totalDays}`}
+                    sub={!w.started ? 'not started' : warmupDone ? 'complete' : undefined}
+                    dimmed={warmupDone}
+                  />
+                </div>
+              );
+            })()
           ) : null}
         </>
       )}
@@ -117,10 +128,10 @@ export default function Dashboard() {
       <section>
         <div className="flex items-baseline justify-between mb-2">
           <h2 className="text-base font-medium">
-            By newsletter
+            By newsletter with most active subscribers
             {nls.length > TOP_N && (
               <span className="ml-2 text-xs font-normal text-slate-400 dark:text-slate-500">
-                top {TOP_N} by active subscribers
+                top {TOP_N}
               </span>
             )}
           </h2>
@@ -189,6 +200,7 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
+                  <th className="text-left p-2">Created</th>
                   <th className="text-left p-2">Subject</th>
                   <th className="text-left p-2">Newsletter</th>
                   <th className="text-left p-2">Status</th>
@@ -199,6 +211,7 @@ export default function Dashboard() {
               <tbody>
                 {recentCampaigns.map((c) => (
                   <tr key={c.id} className="border-t border-slate-100 dark:border-slate-800">
+                    <td className="p-2 text-slate-500 dark:text-slate-400 whitespace-nowrap">{fmtDate(c.created_at)}</td>
                     <td className="p-2">
                       <Link to={`/campaigns/${c.id}`} className="text-orange-600 hover:underline dark:text-orange-400">
                         {c.subject || '(no subject)'}
@@ -240,9 +253,9 @@ export function RefreshIcon({ spinning }: { spinning?: boolean }) {
   );
 }
 
-function Card({ label, value, sub }: { label: string; value: number | string; sub?: string }) {
+function Card({ label, value, sub, dimmed }: { label: string; value: number | string; sub?: string; dimmed?: boolean }) {
   return (
-    <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4 dark:bg-slate-900 dark:border-slate-800">
+    <div className={`bg-white rounded-lg shadow-sm border p-4 dark:bg-slate-900 ${dimmed ? 'border-slate-100 dark:border-slate-800/50 opacity-40' : 'border-slate-200 dark:border-slate-800'}`}>
       <div className="text-xs uppercase tracking-wide text-slate-500 dark:text-slate-400">{label}</div>
       <div className="text-2xl font-semibold mt-1">{typeof value === 'number' ? value.toLocaleString() : value}</div>
       {sub && <div className="text-xs text-slate-400 mt-0.5 dark:text-slate-500">{sub}</div>}

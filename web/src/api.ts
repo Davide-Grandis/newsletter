@@ -49,6 +49,11 @@ export interface Subscriber {
   verified: 0 | 1;
   status: 'active' | 'unsubscribed' | 'bounced' | 'complained';
   bounce_count: number;
+  hard_bounce_count?: number;
+  soft_bounce_count?: number;
+  last_bounce_type?: 'hard' | 'soft' | 'block' | null;
+  last_bounce_code?: string | null;
+  last_bounce_at?: string | null;
   subscribed_at: string;
 }
 
@@ -84,6 +89,7 @@ export interface Campaign {
   sent_count: number;
   failed_count: number;
   attachment_count: number;
+  bounce_count: number;
   link_mode: 0 | 1;
   created_at: string;
   attachment_total_bytes?: number;
@@ -119,6 +125,7 @@ export interface BounceEvent {
   email: string | null;
   status_code: string | null;
   ts: string;
+  campaign_subject: string | null;
 }
 
 export interface Page<T> {

@@ -15,10 +15,13 @@
 //   V(t) = 500 × 100 ^ ((t − 1) / 29)
 //
 // Progression is DEMAND-DRIVEN, not calendar-driven:
-//   - Warmup starts (day 1) the first time demand > 0.
+//   - Starts at day 0; the applied cap is the day-0 cap (minDaily, 500).
+//   - Enters day 1 only when demand EXCEEDS the day-0 cap (a backlog forms).
 //   - Advances one day when the UTC calendar date changes AND demand > 0.
 //   - If no emails are queued for X calendar days, warmup stays put.
 // "Demand" = emails still to send across active campaigns.
+// The applied cap (see appliedDailyCap) is always the NEXT milestone: while at
+// day N you may send V(N+1), so day 0 → V(1), day 1 → V(2), …
 // Days never decrease and cap at totalDays (steady-state).
 
 export interface WarmupConfig {
@@ -80,6 +83,18 @@ export function dailyCapForDay(day: number | null, cfg: WarmupConfig): number {
   return Math.round(cfg.minDaily * Math.pow(cfg.maxDaily / cfg.minDaily, t / n));
 }
 
+/**
+ * Warmup cap currently *applied* while resting at `day` (0-based; null = day 0).
+ * This is the cap of the NEXT milestone — the value you must exceed (i.e. build
+ * a backlog against) to advance. So:
+ *   day 0 (null) → V(1) = minDaily (500)
+ *   day 1        → V(2)
+ *   day N        → V(N+1)  (capped at maxDaily)
+ */
+export function appliedDailyCap(day: number | null, cfg: WarmupConfig): number {
+  return dailyCapForDay((day ?? 0) + 1, cfg);
+}
+
 /** Normalize the Cloudflare quota (`day`/`hour`) to a per-day figure. */
 export function normalizeDailyCap(
   quota: { unit: string; value: number } | null,
@@ -113,7 +128,9 @@ export function progressWarmup(
 ): Progression {
   const todayStr = now.toISOString().slice(0, 10); // 'YYYY-MM-DD'
   if (state.day === null) {
-    if (demand > 0) {
+    // Day 0: warmup only begins once demand exceeds the day-0 cap (a backlog
+    // forms). Below that threshold everything fits, so stay at day 0.
+    if (demand > appliedDailyCap(null, cfg)) {
       return { day: 1, dayStartedAt: todayStr, changed: true };
     }
     return { day: null, dayStartedAt: null, changed: false };

@@ -1,12 +1,14 @@
 import { keepPreviousData, useQuery } from '@tanstack/react-query';
+import { Fragment, useState, type FormEvent } from 'react';
 import { Link } from 'react-router-dom';
-import { useState, type FormEvent } from 'react';
 import { api, LogRow, Page } from '../api';
+import { fmtDate, fmtUtc } from '../utils/date';
+import { Tooltip } from '../components/Tooltip';
 import { RefreshIcon } from './Dashboard';
 import { PAGE_SIZE, Pagination } from '../components/Pagination';
 
-const SOURCES = ['', 'ingest', 'consumer', 'tracker', 'bounce', 'admin'];
-const LEVELS = ['', 'info', 'warn', 'error'];
+const SOURCES = ['', 'ingest', 'consumer', 'tracker', 'bounce', 'admin', 'cleanup'];
+const LEVELS = ['', 'error', 'warn', 'info', 'debug'];
 
 export default function Logs() {
   // `input` is the live text box; `q` is the applied search (on submit).
@@ -15,10 +17,20 @@ export default function Logs() {
   const [source, setSource] = useState('');
   const [level, setLevel] = useState('');
   const [page, setPage] = useState(0);
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  function toggleExpand(key: string) {
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      next.has(key) ? next.delete(key) : next.add(key);
+      return next;
+    });
+  }
 
   const logs = useQuery({
     queryKey: ['logs', q, source, level, page],
     placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
     queryFn: () => {
       const sp = new URLSearchParams({ limit: String(PAGE_SIZE), cursor: String(page * PAGE_SIZE) });
       if (q) sp.set('q', q);
@@ -121,7 +133,7 @@ export default function Logs() {
           className="border border-slate-300 rounded px-2 py-1.5 text-sm bg-white text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100"
         >
           {LEVELS.map((l) => (
-            <option key={l} value={l}>{l ? l : 'All levels'}</option>
+            <option key={l} value={l}>{l ? `${l}+` : 'All levels'}</option>
           ))}
         </select>
         <button
@@ -139,40 +151,78 @@ export default function Logs() {
       ) : (
         <>
           <div className="bg-white border border-slate-200 rounded overflow-hidden dark:bg-slate-900 dark:border-slate-800">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-fixed">
               <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
                 <tr>
-                  <th className="text-left px-3 py-2 whitespace-nowrap">Time (UTC)</th>
-                  <th className="text-left px-3 py-2">Level</th>
-                  <th className="text-left px-3 py-2">Newsletter</th>
-                  <th className="text-left px-3 py-2 min-w-[16rem]">Campaign</th>
-                  <th className="text-left px-3 py-2">Source</th>
-                  <th className="text-left px-3 py-2">Event</th>
-                  <th className="text-left px-3 py-2">Description</th>
+                  <Th label="Time" tip="Date and time of the log entry (UTC)" className="whitespace-nowrap w-44" />
+                  <Th label="Level" tip="Severity: debug, info, warn or error" className="w-16" />
+                  <Th label="Newsletter" tip="Newsletter this entry is associated with" className="w-36" />
+                  <Th label="Campaign" tip="Campaign this entry is associated with" className="w-72" />
+                  <Th label="Source" tip="Worker that produced this log entry (ingest, consumer, tracker, bounce, admin, cleanup)" className="w-24" />
+                  <Th label="Event" tip="Machine-readable event code, e.g. queue.enqueued or send.bounced" className="w-40" />
+                  <Th label="Description" tip="Human-readable summary. Click a row to expand the full detail payload." />
                 </tr>
               </thead>
               <tbody>
-                {items.map((r) => (
-                  <tr key={`${r.kind}-${r.id}`} className="border-t border-slate-100 align-top dark:border-slate-800">
-                    <td className="px-3 py-1 whitespace-nowrap text-slate-500 dark:text-slate-400">{r.ts}</td>
-                    <td className="px-3 py-1"><LevelBadge level={r.level} /></td>
-                    <td className="px-3 py-1 whitespace-nowrap text-slate-600 dark:text-slate-300">{r.newsletter_name ?? '—'}</td>
-                    <td className="px-3 py-1">
-                      {r.campaign_id ? (
-                        <Link to={`/campaigns/${r.campaign_id}`} className="text-slate-500 hover:underline dark:text-slate-400">
-                          {r.campaign_subject || '(no subject)'}
-                        </Link>
-                      ) : (
-                        <span className="text-slate-400 dark:text-slate-600">—</span>
+                {items.map((r) => {
+                  const key = `${r.kind}-${r.id}`;
+                  const isTrackerClick = r.kind === 'event' && r.source === 'tracker' && r.event === 'click';
+                  const hasDetail = (r.kind === 'log' && !!r.detail) || (isTrackerClick && !!r.detail);
+                  const isOpen = expanded.has(key);
+                  const description = isTrackerClick
+                    ? (r.email ?? '—')
+                    : (r.message ?? (r.kind === 'event' ? [r.email, r.detail].filter(Boolean).join(' — ') : '—'));
+                  return (
+                    <Fragment key={key}>
+                      <tr
+                        className={`border-t border-slate-100 align-top dark:border-slate-800 ${
+                          hasDetail ? 'cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800/50' : ''
+                        }`}
+                        onClick={hasDetail ? () => toggleExpand(key) : undefined}
+                      >
+                        <td className="px-3 py-1 whitespace-nowrap overflow-hidden text-slate-500 dark:text-slate-400">
+                          <Tooltip text={fmtUtc(r.ts)}>{fmtDate(r.ts)}</Tooltip>
+                        </td>
+                        <td className="px-3 py-1"><LevelBadge level={r.level} /></td>
+                        <td className="px-3 py-1 overflow-hidden text-slate-600 dark:text-slate-300"><span className="block truncate">{r.newsletter_name ?? '—'}</span></td>
+                        <td className="px-3 py-1 overflow-hidden">
+                          {r.campaign_id ? (
+                            <Link to={`/campaigns/${r.campaign_id}`} className="block truncate text-slate-500 hover:underline dark:text-slate-400" onClick={(e) => e.stopPropagation()}>
+                              {r.campaign_subject || '(no subject)'}
+                            </Link>
+                          ) : (
+                            <span className="text-slate-400 dark:text-slate-600">—</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-1 overflow-hidden text-slate-500 dark:text-slate-400"><span className="block truncate">{r.source}</span></td>
+                        <td className="px-3 py-1 overflow-hidden"><span className="block truncate">{r.event}</span></td>
+                        <td className="px-3 py-1 text-slate-700 dark:text-slate-200">
+                          <div className="flex items-start gap-1.5">
+                            {hasDetail && (
+                              <span className="mt-0.5 shrink-0 text-slate-400 dark:text-slate-500">{isOpen ? '▾' : '▸'}</span>
+                            )}
+                            <span>{description}</span>
+                          </div>
+                        </td>
+                      </tr>
+                      {isOpen && hasDetail && (
+                        <tr className="border-t border-slate-100 bg-slate-50 dark:border-slate-800 dark:bg-slate-800/40">
+                          <td colSpan={7} className="px-6 py-2">
+                            {isTrackerClick ? (
+                              <a href={r.detail!} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 dark:text-blue-400 break-all hover:underline">
+                                {r.detail}
+                              </a>
+                            ) : (
+                              <pre className="text-xs text-slate-700 dark:text-slate-300 whitespace-pre-wrap break-all font-mono">
+                                {JSON.stringify(JSON.parse(r.detail!), null, 2)}
+                              </pre>
+                            )}
+                          </td>
+                        </tr>
                       )}
-                    </td>
-                    <td className="px-3 py-1 text-slate-500 dark:text-slate-400">{r.source}</td>
-                    <td className="px-3 py-1">{r.event}</td>
-                    <td className="px-3 py-1 text-slate-700 dark:text-slate-200">
-                      {r.message ?? (r.kind === 'event' ? [r.email, r.detail].filter(Boolean).join(' — ') : '—')}
-                    </td>
-                  </tr>
-                ))}
+                    </Fragment>
+                  );
+                })}
                 {items.length === 0 && (
                   <tr><td colSpan={7} className="p-4 text-center text-slate-500 dark:text-slate-400">No log entries match.</td></tr>
                 )}
@@ -184,6 +234,15 @@ export default function Logs() {
         </>
       )}
     </div>
+  );
+}
+
+
+function Th({ label, tip, className = '' }: { label: string; tip: string; className?: string }) {
+  return (
+    <th className={`text-left px-3 py-2 ${className}`}>
+      <Tooltip text={tip}><span>{label}</span></Tooltip>
+    </th>
   );
 }
 

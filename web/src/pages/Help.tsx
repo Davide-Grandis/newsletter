@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeRaw from 'rehype-raw';
 import { api, ApiError, Help as HelpDoc } from '../api';
 
 interface HelpSection {
@@ -74,15 +75,10 @@ export default function Help() {
     <div className="space-y-6">
       <div className="flex items-baseline gap-3">
         <h1 className="text-xl font-semibold">Help</h1>
-        {data?.updated && (
-          <span className="text-xs text-slate-400 dark:text-slate-500">
-            updated {new Date(data.updated).toLocaleString()}
-          </span>
-        )}
       </div>
       {preamble && (
         <article className="prose-sm max-w-none">
-          <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+          <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={mdComponents}>
             {preamble}
           </ReactMarkdown>
         </article>
@@ -108,13 +104,13 @@ export default function Help() {
           <AboutCard />
         ) : sections.length > 0 ? (
           <article className="prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={mdComponents}>
               {active ? `## ${active.title}\n${active.body}` : ''}
             </ReactMarkdown>
           </article>
         ) : (
           <article className="prose-sm max-w-none">
-            <ReactMarkdown remarkPlugins={[remarkGfm]} components={mdComponents}>
+            <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeRaw]} components={mdComponents}>
               {data?.content ?? ''}
             </ReactMarkdown>
           </article>
@@ -167,7 +163,7 @@ function AboutCard() {
             ['Ingest', 'Receives inbound email via Email Routing, stores it and enqueues sends'],
             ['Consumer', 'Dequeues batches, builds MIME per recipient, sends via Email Sending'],
             ['Admin', 'Serves this console and exposes the management REST API'],
-            ['Bounce', 'Processes VERP bounce emails and updates subscriber status'],
+            ['Bounce', 'Syncs delivery failures via GraphQL API; handles mailto unsubscribes'],
             ['Cleanup', 'Daily cron: deletes expired campaigns, attachments and archives'],
           ].map(([name, desc]) => (
             <div key={name} className="flex gap-2">
@@ -178,9 +174,7 @@ function AboutCard() {
         </div>
       </div>
       <div className="px-4 py-3 border-t border-slate-100 dark:border-slate-800 flex flex-wrap gap-x-6 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-        <span>v1.0 · Last updated Jun 15, 2026</span>
-        <span>Built on Cloudflare Workers</span>
-        <span>Davide Grandis · <a href="mailto:davideg@cloudflare.com" className="hover:underline">davideg@cloudflare.com</a></span>
+        <span>v2.0 (June 20, 2026)</span>
       </div>
     </div>
   );
@@ -214,7 +208,18 @@ const mdComponents = {
       <table className="w-full text-sm border border-slate-200 dark:border-slate-800" {...p} />
     </div>
   ),
-  th: (p: any) => <th className="text-left p-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800" {...p} />,
+  th: ({ children, ...p }: any) => {
+    const text = String(children ?? '');
+    const widths: Record<string, string> = {
+      'SMTP': '5%',
+      'Enhanced': '8%',
+      'Enhanced detail': '35%',
+      'Class': '6%',
+      'Meaning': '46%',
+    };
+    const width = widths[text];
+    return <th className="text-left p-2 bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-800" style={width ? { width } : undefined} {...p}>{children}</th>;
+  },
   td: (p: any) => <td className="p-2 border border-slate-200 dark:border-slate-800" {...p} />,
   hr: () => <hr className="my-6 border-slate-200 dark:border-slate-800" />,
 };

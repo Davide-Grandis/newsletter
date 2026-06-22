@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, Author } from '../api';
+import { fmtDate } from '../utils/date';
 import { Tooltip } from '../components/Tooltip';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 
@@ -209,7 +210,7 @@ export default function Authors({
               <tr key={a.email} className="border-t border-slate-100 dark:border-slate-800">
                 <td className="p-2 font-mono text-xs">{a.email}</td>
                 <td className="p-2">{a.name ?? <span className="text-slate-400 dark:text-slate-500">—</span>}</td>
-                <td className="p-2 text-slate-500 text-xs dark:text-slate-400">{a.created_at}</td>
+                <td className="p-2 text-slate-500 text-xs dark:text-slate-400">{fmtDate(a.created_at)}</td>
                 <td className="p-2">
                   {canEdit && (
                     <button

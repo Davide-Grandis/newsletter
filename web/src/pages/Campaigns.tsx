@@ -2,6 +2,8 @@ import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
 import { useState } from 'react';
 import { api, Campaign, Page } from '../api';
+import { fmtDate } from '../utils/date';
+import { Tooltip } from '../components/Tooltip';
 import { PAGE_SIZE, Pagination } from '../components/Pagination';
 import { RefreshIcon } from './Dashboard';
 
@@ -10,6 +12,7 @@ export default function Campaigns() {
   const { data, isLoading, isFetching, refetch } = useQuery({
     queryKey: ['campaigns', page],
     placeholderData: keepPreviousData,
+    refetchInterval: 60_000,
     queryFn: () =>
       api<Page<Campaign>>(`/api/campaigns?limit=${PAGE_SIZE}&cursor=${page * PAGE_SIZE}`),
   });
@@ -35,14 +38,14 @@ export default function Campaigns() {
           <table className="w-full text-sm">
             <thead className="bg-slate-50 text-slate-600 dark:bg-slate-800/60 dark:text-slate-300">
               <tr>
-                <th className="text-left p-2">Subject</th>
-                <th className="text-left p-2">Newsletter</th>
-                <th className="text-left p-2">Status</th>
-                <th className="text-right p-2">Recipients</th>
-                <th className="text-right p-2">Sent</th>
-                <th className="text-right p-2">Failed</th>
-                <th className="text-right p-2">Att.</th>
-                <th className="text-left p-2">Sent at</th>
+                <Th align="left" label="Subject" hint="(click for details)" tip="Campaign email subject line" />
+                <Th align="left" label="Newsletter" tip="Newsletter this campaign belongs to" />
+                <Th align="left" label="Status" tip="Current lifecycle state of the campaign" />
+                <Th align="right" label="Recipients" tip="Total number of subscribers this campaign was sent to" className="px-4" />
+                <Th align="right" label="Sent" tip="Emails successfully accepted for delivery" className="px-4" />
+                <Th align="right" label="Failed" tip="Emails that failed to send" className="px-4" />
+                <Th align="right" label="Bounces" tip="Delivery failures reported by the receiving mail server (detected asynchronously)" className="px-4" />
+                <Th align="left" label="Sent at" tip="Date and time the campaign was created" className="px-4" />
               </tr>
             </thead>
             <tbody>
@@ -58,11 +61,11 @@ export default function Campaigns() {
                   </td>
                   <td className="p-2 text-slate-500 dark:text-slate-400">{c.newsletter_name ?? '—'}</td>
                   <td className="p-2"><CampaignStatus status={c.status} /></td>
-                  <td className="p-2 text-right">{c.total_recipients}</td>
-                  <td className="p-2 text-right text-emerald-700 dark:text-emerald-400">{c.sent_count}</td>
-                  <td className="p-2 text-right text-red-700 dark:text-red-400">{c.failed_count}</td>
-                  <td className="p-2 text-right">{c.attachment_count}</td>
-                  <td className="p-2 text-slate-500 dark:text-slate-400">{c.created_at}</td>
+                  <td className="px-4 py-2 text-right">{c.total_recipients}</td>
+                  <td className="px-4 py-2 text-right text-emerald-700 dark:text-emerald-400">{c.sent_count}</td>
+                  <td className="px-4 py-2 text-right text-red-700 dark:text-red-400">{c.failed_count}</td>
+                  <td className="px-4 py-2 text-right text-amber-700 dark:text-amber-400">{c.bounce_count || '—'}</td>
+                  <td className="px-4 py-2 text-slate-500 dark:text-slate-400">{fmtDate(c.created_at)}</td>
                 </tr>
               ))}
               {data && data.items.length === 0 && (
@@ -82,6 +85,26 @@ export default function Campaigns() {
         />
       )}
     </div>
+  );
+}
+
+
+function Th({ align = 'left', label, hint, tip, className = '' }: {
+  align?: 'left' | 'center' | 'right';
+  label: string;
+  hint?: string;
+  tip?: string;
+  className?: string;
+}) {
+  const content = tip ? <Tooltip text={tip}><span>{label}</span></Tooltip> : <span>{label}</span>;
+  const alignCls = align === 'right' ? 'text-right' : align === 'center' ? 'text-center' : 'text-left';
+  return (
+    <th className={`p-2 ${alignCls} ${className}`}>
+      <span className={`inline-flex items-center gap-1.5 ${align === 'right' ? 'flex-row-reverse' : align === 'center' ? 'justify-center' : ''}`}>
+        {content}
+        {hint && <span className="font-normal normal-case tracking-normal text-slate-400 dark:text-slate-500">{hint}</span>}
+      </span>
+    </th>
   );
 }
 

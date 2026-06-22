@@ -292,12 +292,10 @@ worker is already the **catch-all** inbound route (per the deploy runbook).
    WHERE id = ? AND status='active'
    ```
 
-3. If a row changed, inserts an `unsubscribe` event, then **returns early**
-   (skips all bounce processing).
+3. If a row changed, inserts an `unsubscribe` event.
 
 Here the sender's own mail provider is the proof of intent — a mailto carries no
-token — which matches standard "unsubscribe by email" behaviour. The same
-worker still handles `bounce+<campaign>.<sub>@` VERP for actual bounces.
+token — which matches standard "unsubscribe by email" behaviour.
 
 ### 3.4 Footer link (guaranteed)
 

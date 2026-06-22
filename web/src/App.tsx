@@ -125,14 +125,16 @@ function Layout() {
             <HamburgerIcon />
           </button>
           <span className="flex items-center gap-2 font-semibold text-[#0060BE]">
-            <img
-              src="/media/logoenea1.png"
-              alt="Logo"
-              className="h-8 w-auto"
-              onError={(e) => {
-                (e.currentTarget as HTMLImageElement).style.display = 'none';
-              }}
-            />
+            <a href="https://www.enea.it/en/" target="_blank" rel="noopener noreferrer">
+              <img
+                src="/media/logoenea1.png"
+                alt="ENEA"
+                className="h-8 w-auto"
+                onError={(e) => {
+                  (e.currentTarget as HTMLImageElement).style.display = 'none';
+                }}
+              />
+            </a>
             Newsletter Admin Console
           </span>
           <div className="ml-auto flex items-center gap-3 text-sm">
@@ -195,19 +197,13 @@ function Layout() {
   );
 }
 
-const APP_VERSION = '1.1';
-const LAST_UPDATED = 'Jun 17, 2026';
+const APP_VERSION = '2.1';
+const LAST_UPDATED = 'Jun 22, 2026';
 
 function Footer() {
   return (
     <footer className="shrink-0 border-t border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900 px-4 py-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-slate-500 dark:text-slate-400">
-        <span className="flex items-center gap-x-4 gap-y-1 flex-wrap">
-          <span>Last updated {LAST_UPDATED}</span>
-          <span aria-hidden>·</span>
-          <span>v{APP_VERSION}</span>
-        </span>
-        <span aria-hidden>·</span>
+      <div className="flex justify-center text-xs text-slate-500 dark:text-slate-400">
         <span className="flex items-center gap-1">
           Built with
           <HeartIcon />
@@ -223,7 +219,7 @@ function NoAccess({ email }: { email: string | null }) {
     <div className="h-screen flex flex-col items-center justify-center gap-4 p-6 text-center bg-slate-50 dark:bg-slate-950">
       <img
         src="/media/logoenea1.png"
-        alt="Logo"
+        alt="ENEA"
         className="h-10 w-auto"
         onError={(e) => {
           (e.currentTarget as HTMLImageElement).style.display = 'none';

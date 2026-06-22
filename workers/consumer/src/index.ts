@@ -20,7 +20,7 @@ import type { QueueMessage } from '../../../shared/types';
 import {
   readWarmupConfig,
   progressWarmup,
-  dailyCapForDay,
+  appliedDailyCap,
   normalizeDailyCap,
   dayStartSql,
   delayUntilNextWindow,
@@ -42,8 +42,7 @@ export interface Env {
   // own). Already sanitized when stored via the Settings page.
   DEFAULT_FOOTER_HTML: string;
   DEFAULT_FOOTER_TEXT: string;
-  // Bounce/return-path, unsubscribe-by-email and Message-IDs all use the
-  // sending domain (formerly a separate BOUNCE_DOMAIN setting).
+  // Unsubscribe-by-email and Message-IDs use the sending domain.
   BASE_DOMAIN: string;
   MAX_RAW_BYTES: string;
   LINK_SIGNING_KEY: string;
@@ -98,7 +97,7 @@ export default {
         : await loadWarmupState(env.DB);
     }
 
-    const warmupDailyCap = dailyCapForDay(state.day, cfg);
+    const warmupDailyCap = appliedDailyCap(state.day, cfg);
     const dayStart = dayStartSql(now);
     const sentToday = await countSentSince(env.DB, dayStart);
     // Effective daily budget: the smaller of the warmup ramp cap and the
@@ -229,7 +228,6 @@ export default {
             // Per-newsletter sender if set, otherwise the global default.
             const fromHeader = campaign.from_address || env.FROM_ADDRESS;
             const fromAddr = extractAddr(fromHeader);
-            const returnPath = `bounce+${campaignId}.${r.subscriberId}@${env.BASE_DOMAIN}`;
 
             const raw = buildEmail({
               from: fromHeader,
@@ -242,7 +240,6 @@ export default {
               headers: {
                 'List-Unsubscribe': `<${unsubUrl}>, <mailto:unsubscribe+${r.subscriberId}@${env.BASE_DOMAIN}>`,
                 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click',
-                'Return-Path': `<${returnPath}>`,
                 'X-Campaign-ID': campaignId,
               },
             });

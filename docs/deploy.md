@@ -175,19 +175,12 @@ Dashboard → Email Routing → **Routes**.
 
 | Match                                | Action                              |
 | ------------------------------------ | ----------------------------------- |
-| `newsletter@yourdomain.com`       | Send to Worker → `newsletter-ingest`|
-| `bounce+*@yourdomain.com` (custom)| Send to Worker → `newsletter-bounce`|
+| `newsletter@yourdomain.com` | Send to Worker → `newsletter-ingest`|
+| catch-all               | Send to Worker → `newsletter-bounce`|
 
-The `bounce+*` pattern needs a **catch-all** rule with action "send to
-worker", because Email Routing's UI doesn't accept `+*` literally; the
-catch-all worker handler in `bounce/src/index.ts` then filters by prefix.
-
-> **One-time prerequisite — Subaddressing:** VERP bounce attribution relies on
-> the `+` separator (`bounce+<id>@<domain>`). Go to **Cloudflare dashboard →
-> Email → Email Routing → Settings → Subaddressing** and enable it for the
-> zone. This cannot be done via the API and is not set automatically. Without
-> it, all `bounce+*` addresses are treated as unrecognised and never reach the
-> bounce worker.
+The catch-all rule delivers all other inbound mail (including `unsubscribe+*`
+mailto replies) to the bounce worker. Bounces are detected via the Cloudflare
+GraphQL API on a cron, not via inbound DSN routing.
 
 ## 7. Bind the tracker to its custom hostname
 

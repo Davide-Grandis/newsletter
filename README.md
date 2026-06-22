@@ -62,8 +62,8 @@ raw archives in R2.
 - **Demand-driven warmup** — weekly stepped cap plus the account's live daily
   Cloudflare quota gate outbound volume to protect reputation. See
   [`docs/warmup.md`](docs/warmup.md).
-- **Bounce & complaint handling** — VERP DSN/ARF parsing updates subscriber
-  status past configurable thresholds.
+- **Bounce handling** — Cloudflare GraphQL delivery-failure sync updates
+  subscriber status past configurable thresholds.
 - **Retention** — a nightly cron purges campaigns (and their R2 bytes) older
   than `RETENTION_DAYS`. See [`docs/retention.md`](docs/retention.md).
 - **Admin console** — React SPA behind Cloudflare Access with role-based
@@ -77,7 +77,7 @@ raw archives in R2.
 | `ingest`    | Email handler  | Parse inbound mail, store attachments to R2, enqueue batches   |
 | `consumer`  | Queue consumer | Build MIME per recipient, send via `SEND_EMAIL`, log to D1     |
 | `tracker`   | HTTP           | Pixel, signed click redirect, unsubscribe, attachment download |
-| `bounce`    | Email handler  | Parse DSN/ARF on `bounce+*@`, update subscriber + events       |
+| `bounce`    | Email+Cron     | One-click email unsubscribe; GraphQL delivery-failure sync     |
 | `cleanup`   | Cron Trigger   | Retention: prune R2 + D1                                       |
 | `admin`     | HTTP + SPA     | JSON API + GUI: newsletters, subscribers, authors, campaigns, bounces |
 
@@ -163,11 +163,6 @@ During development, run `cd web && npm run dev` (Vite proxies `/api/*` to
 ## Prerequisites
 
 - Cloudflare zone with Email Routing enabled (MX/SPF set up).
-- **Email Routing Subaddressing enabled** for the zone (Cloudflare dashboard →
-  Email → Email Routing → Settings → Subaddressing). This is a **one-time
-  manual step** that cannot be set via API. Without it, the VERP
-  `bounce+<id>@<domain>` addresses used for bounce attribution won't reach
-  the bounce worker.
 - Email Sending (beta) enabled on the zone, DKIM published, the
   `SEND_EMAIL` binding allow-listed for `newsletter@yourdomain.com`.
 - `wrangler` >= 3, Node 20+.
@@ -221,7 +216,7 @@ What each worker's `wrangler.toml` declares:
 | **ingest** | `nodejs_compat`; `DB` (D1); `ARCHIVE` (R2 `newsletter-archive`); `QUEUE` producer (`newsletter-queue`). Receives the newsletter inbound address via an Email Routing rule. |
 | **consumer** | `nodejs_compat`; `DB`; `ARCHIVE`; `SEND_EMAIL`; `QUEUE` producer (re-enqueue overflow); queue **consumer** on `newsletter-queue` (`max_batch_size`/`max_concurrency`/`max_retries`, DLQ `newsletter-dlq`). Optional secret `CF_READ_API_TOKEN`; signing-key secrets must match the tracker. |
 | **tracker** | `DB`; `ARCHIVE`; `SEND_EMAIL`; custom-domain `routes` (`track.*`). Secrets `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY` (match the consumer) and optional `TURNSTILE_SECRET_KEY`. |
-| **bounce** | `nodejs_compat`; `DB`; `ARCHIVE`. Receives `bounce+*@<domain>` via a catch-all Email Routing rule. |
+| **bounce** | `nodejs_compat`; `DB`. Receives one-click unsubscribes via a catch-all Email Routing rule; cron syncs delivery failures via the Cloudflare GraphQL API. |
 | **cleanup** | `DB`; `ARCHIVE`; `[triggers] crons` (daily at 04:00 UTC). |
 | **admin** | `DB`; `SEND_EMAIL`; `ASSETS_R2` (R2 `newsletter-admin`, `jurisdiction = "eu"`); `[assets]` SPA from `./public` (SPA fallback); custom-domain `routes` (`console.*`). No auth secret — sits behind Cloudflare Access. Optional secrets `CF_API_TOKEN`, `CF_READ_API_TOKEN`, `CF_ZT_API_TOKEN`. |
 
@@ -234,7 +229,7 @@ With the files in place:
 ```bash
 # Email Routing rules
 #   newsletter@yourdomain.com    -> Worker `ingest`
-#   bounce+*@yourdomain.com      -> Worker `bounce`  (catch-all w/ VERP)
+#   catch-all                    -> Worker `bounce`  (unsubscribes + cron bounce sync)
 
 # Secrets
 wrangler secret put LINK_SIGNING_KEY        --name tracker
@@ -305,7 +300,7 @@ Email Routing / Email Sending setup from [*Prerequisites*](#prerequisites):
 | Setting | Purpose |
 | ------- | ------- |
 | `FROM_ADDRESS` | Default `From:` header for outbound mail (a newsletter may override its own sender). |
-| `BASE_DOMAIN` | Sending domain — the Cloudflare zone newsletters send from and receive inbound mail on. Also used for VERP bounce return-path addresses (`bounce+<id>@`). Saving it auto-resolves `EMAIL_ROUTING_ZONE_ID` and auto-creates the `bounce@<domain>` Email Routing rule. **One-time:** enable Email Routing *Subaddressing* for the domain in the dashboard (not API-configurable) so `bounce+<id>@` reaches the bounce worker. |
+| `BASE_DOMAIN` | Sending domain — the Cloudflare zone newsletters send from and receive inbound mail on. Saving it auto-resolves `EMAIL_ROUTING_ZONE_ID`. |
 | `TRACKING_BASE_URL` | Base URL of the tracker worker (opens, clicks, unsubscribe, downloads). |
 | `INGEST_WORKER_NAME` | Worker script the auto-managed Email Routing rules target. |
 | `DEFAULT_FOOTER_HTML` / `DEFAULT_FOOTER_TEXT` | Global default email footer appended to every message, unless a newsletter sets its own footer. Supports `{{unsubscribe_url}}`, `{{newsletter_name}}`, `{{email}}` tokens; an unsubscribe link is always added. HTML is sanitized to an allow-list on save. |
@@ -349,9 +344,6 @@ Email Sending quota.
 - If total raw size exceeds `ATTACHMENT_LINK_THRESHOLD_BYTES`, the
   ingest worker switches to **link mode** and rewrites the HTML to use
   signed download URLs served by the tracker worker.
-- VERP `bounce+<sendId>@` lets the bounce worker attribute DSNs to
-  specific sends.
-
 ---
 
 # Consolidated Design Plan
@@ -395,7 +387,7 @@ Author ──▶ Email Routing ──▶ Ingest Worker (Email handler)
 - **Email Sending (beta)** enabled; DKIM published; `SEND_EMAIL` binding allow-listed for `newsletter@yourdomain.com`.
 - **Routes**:
   - `newsletter@yourdomain.com` → Ingest Worker
-  - `bounce+*@yourdomain.com` (VERP) → Bounce Worker
+  - catch-all → Bounce Worker (one-click email unsubscribes)
 - **D1**: `newsletter_db`
 - **Queues**: `newsletter-queue` (+ DLQ `newsletter-dlq`)
 - **R2**: `newsletter-archive` (raw inbound + attachments + raw event logs)
@@ -427,7 +419,6 @@ authors, subscribers and campaigns (all scoped by `newsletter_id`).
 ## 5. R2 — `newsletter-archive`
 - `campaigns/<id>/raw.eml` — original inbound MIME.
 - `campaigns/<id>/attachments/<sha256>` — deduped attachment bytes (metadata: filename, contentType, size, contentId).
-- `bounces/<yyyy-mm-dd>/<msgid>.eml` — raw DSN/ARF reports.
 - `events/<yyyy-mm-dd>.ndjson` — long-term raw event log.
 
 ## 6. Workers
@@ -455,7 +446,7 @@ authors, subscribers and campaigns (all scoped by `newsletter_id`).
     - `multipart/related` (HTML + inline images via `cid:<content_id>`)
       - `multipart/alternative` (text + html with tracking pixel + signed click links)
     - One `attachment` part per non-inline file: base64, `Content-Disposition: attachment; filename="..."`, correct `Content-Type`.
-  - Headers: `From`, `To`, `Subject`, `Message-ID`, `List-Unsubscribe`, `List-Unsubscribe-Post: List-Unsubscribe=One-Click`, VERP `Return-Path: bounce+<campaignId>.<subscriberId>@...`.
+  - Headers: `From`, `To`, `Subject`, `Message-ID`, `List-Unsubscribe`, `List-Unsubscribe-Post: List-Unsubscribe=One-Click`.
 - Pre-flight size guard: reject batch early if total MIME (×1.34 base64 overhead) exceeds `MAX_RAW_BYTES`.
 - `await env.SEND_EMAIL.send(new EmailMessage(from, to, raw))`.
 - On success → update `sends`, increment `campaigns.sent_count`.
@@ -471,10 +462,9 @@ authors, subscribers and campaigns (all scoped by `newsletter_id`).
 - `GET /verify/:sub?t=<confirm_token>` → confirm a pending public signup.
 - Bindings: `DB`, `ARCHIVE`, optional `SEND_EMAIL`, secrets `LINK_SIGNING_KEY`, `ATTACHMENT_SIGNING_KEY`, optional `TURNSTILE_SECRET_KEY`.
 
-### d) `bounce-worker` (Email Worker)
-- Receives DSN/ARF at `bounce+<campaignId>.<subscriberId>@`; map back via VERP.
-- Parse `Status:`; classify hard (5.x.x) vs soft; update `subscribers.bounce_count`; mark `bounced` after threshold.
-- Insert `events(type='bounce')`; archive raw to R2.
+### d) `bounce-worker` (Email + Cron Worker)
+- `email` handler: processes `List-Unsubscribe` mailto replies (`unsubscribe+<id>@`) — marks subscriber unsubscribed and inserts an unsubscribe event.
+- `scheduled` handler: queries the Cloudflare Email Sending GraphQL API for delivery failures in the last 25 hours; classifies hard/soft; updates subscriber bounce counters; marks `bounced` after threshold; inserts `events(type='bounce')`.
 
 ### e) `cleanup-worker` (Cron Trigger)
 - Daily: delete R2 attachments and `attachments`/`campaigns` rows older than `RETENTION_DAYS` (cascade prunes `sends`/`events`).
@@ -533,7 +523,7 @@ the authoritative database schema.)
 
 **Open / click / download**: Tracker Worker logs to `events`; downloads stream from R2 with HMAC-signed URLs.
 
-**Bounce**: VERP DSN → Bounce Worker → subscriber + `events` updated; raw archived in R2.
+**Bounce**: Bounce Worker cron queries Cloudflare GraphQL API → subscriber + `events` updated.
 
 **Public signup**: `GET /subscribe/<slug>` (Turnstile) → pending subscriber +
 confirmation email → `GET /verify/<id>?t=` confirms (double opt-in) before any
@@ -612,7 +602,7 @@ weekly progression (read-only), backed by `GET /api/email-sending-stats`.
 4. `ingest-worker` end-to-end batching (no attachments).
 5. **Attachment pipeline**: R2 storage in ingest, MIME builder w/ attachments + inline CIDs in consumer, size-budget checks, link-mode fallback.
 6. `tracker-worker` (opens, clicks, unsubscribe, attachment downloads).
-7. `bounce-worker` + VERP.
+7. `bounce-worker` (GraphQL delivery-failure sync + mailto unsubscribe).
 8. `cleanup-worker` cron + retention.
 9. `admin-worker` + dashboard queries.
 10. Load test with synthetic subscriber list and large attachments; tune batch/concurrency.

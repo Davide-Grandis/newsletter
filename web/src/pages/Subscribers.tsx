@@ -5,6 +5,7 @@ import { SortIcon } from './Newsletters';
 import { Tooltip } from '../components/Tooltip';
 import { ConfirmDialog } from '../components/ConfirmDialog';
 import { PAGE_SIZE, Pagination } from '../components/Pagination';
+import { fmtDate } from '../utils/date';
 
 type SortKey = 'email' | 'name' | 'status' | 'verified' | 'bounce_count' | 'subscribed_at';
 type ImportResult = { added: number; duplicated: number };
@@ -78,6 +79,12 @@ export default function Subscribers({
     },
   });
 
+  const reactivate = useMutation({
+    mutationFn: (subId: number) =>
+      api(`${base}/${subId}`, { method: 'PATCH', body: JSON.stringify({ status: 'active' }) }),
+    onSuccess: refresh,
+  });
+
   const [verifying, setVerifying] = useState<number | null>(null);
   const [verifyError, setVerifyError] = useState<string | null>(null);
   const resend = useMutation({
@@ -133,7 +140,7 @@ export default function Subscribers({
           onChange={(e) => { setVerified(e.target.value); setPage(0); }}
           className={inputCls}
         >
-          <option value="">All verified</option>
+          <option value="">All</option>
           <option value="true">Verified</option>
           <option value="false">Not verified</option>
         </select>
@@ -143,8 +150,11 @@ export default function Subscribers({
           className={inputCls}
         >
           <option value="">All bounces</option>
-          <option value="0">0 bounces</option>
-          <option value="gt0">&gt; 0 bounces</option>
+          <option value="0">No bounces</option>
+          <option value="gt0">Any bounce</option>
+          <option value="hard">Hard (permanent)</option>
+          <option value="soft">Soft (transient)</option>
+          <option value="block">Block (policy)</option>
         </select>
         <button
           type="button"
@@ -154,27 +164,31 @@ export default function Subscribers({
         >
           {list.isFetching ? 'Refreshing…' : 'Refresh'}
         </button>
-        <button
-          type="button"
-          onClick={onExport}
-          disabled={exporting}
-          className="text-sm bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
-        >
-          {exporting ? 'Exporting…' : 'Export CSV'}
-        </button>
+        <Tooltip text="With current filter">
+          <button
+            type="button"
+            onClick={onExport}
+            disabled={exporting}
+            className="text-sm bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 disabled:opacity-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800"
+          >
+            {exporting ? 'Exporting…' : 'Export CSV'}
+          </button>
+        </Tooltip>
         {canEdit && (
-          <label className="text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
-            Import CSV
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              className="hidden"
-              onChange={(e) => {
-                const f = e.currentTarget.files?.[0];
-                if (f) upload.mutate(f);
-              }}
-            />
-          </label>
+          <Tooltip text="Append mode">
+            <label className="text-sm cursor-pointer bg-white border border-slate-200 rounded px-3 py-1.5 hover:bg-slate-50 dark:bg-slate-900 dark:border-slate-700 dark:hover:bg-slate-800">
+              Import CSV
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.currentTarget.files?.[0];
+                  if (f) upload.mutate(f);
+                }}
+              />
+            </label>
+          </Tooltip>
         )}
       </div>
 
@@ -225,7 +239,7 @@ export default function Subscribers({
               <Th label="Verified" title="Whether the email address has been confirmed. Defaults to False for new subscribers." sortKey="verified" sort={sort} onSort={toggleSort} className="w-[8%]" />
               <Th label="Bounces" title="Number of times mail to this address has bounced." sortKey="bounce_count" sort={sort} onSort={toggleSort} align="right" className="w-[9%]" />
               <Th label="Date subscribed" title="When the subscriber was added to the list." sortKey="subscribed_at" sort={sort} onSort={toggleSort} className="w-[20%] pl-8" />
-              <th className="p-2 w-[7%]" />
+              <th className="p-2 w-[14%]" />
             </tr>
           </thead>
           <tbody>
@@ -247,11 +261,26 @@ export default function Subscribers({
                     {s.verified === 1 ? 'True' : 'False'}
                   </span>
                 </td>
-                <td className="p-2 text-right">{s.bounce_count}</td>
-                <td className="p-2 pl-8 truncate">{s.subscribed_at}</td>
+                <td className="p-2 text-right">
+                  <span className="inline-flex items-center gap-1.5 justify-end">
+                    {s.last_bounce_type && <BounceTypeBadge type={s.last_bounce_type} code={s.last_bounce_code} />}
+                    <span>{s.bounce_count}</span>
+                  </span>
+                </td>
+                <td className="p-2 pl-8 truncate">{fmtDate(s.subscribed_at)}</td>
                 <td className="p-2 text-right">
                   {canEdit && (
                     <div className="inline-flex items-center gap-1 justify-end">
+                    <Tooltip text="Re-activate (only for bounced and complained)">
+                      <button
+                        type="button"
+                        disabled={s.status !== 'bounced' && s.status !== 'complained' || reactivate.isPending}
+                        onClick={() => reactivate.mutate(s.id)}
+                        className="inline-flex items-center justify-center w-6 h-6 rounded-full border border-emerald-300 text-emerald-600 text-xs font-semibold hover:bg-emerald-50 disabled:opacity-50 disabled:cursor-not-allowed dark:border-emerald-700 dark:text-emerald-400 dark:hover:bg-emerald-900/20"
+                      >
+                        R
+                      </button>
+                    </Tooltip>
                     <Tooltip text="Delete subscriber">
                       <button
                         type="button"
@@ -342,8 +371,37 @@ function Th({
   );
 }
 
+
 const inputCls =
   'border border-slate-300 rounded px-2 py-1 text-sm bg-white text-slate-900 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-100';
+
+export function BounceTypeBadge({
+  type,
+  code,
+}: {
+  type: 'hard' | 'soft' | 'block';
+  code?: string | null;
+}) {
+  const cls: Record<string, string> = {
+    hard: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
+    soft: 'bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300',
+    block: 'bg-purple-100 text-purple-800 dark:bg-purple-900/40 dark:text-purple-300',
+  };
+  const labels: Record<string, string> = {
+    hard: 'Hard — permanent failure (e.g. mailbox not found)',
+    soft: 'Soft — transient failure (e.g. full mailbox)',
+    block: 'Block — reputation/policy rejection',
+  };
+  const label = labels[type] ?? type;
+  const tip = code ? `${label} (${code})` : label;
+  return (
+    <Tooltip text={tip}>
+      <span className={`text-[10px] uppercase px-1.5 py-0.5 rounded font-medium ${cls[type]}`}>
+        {type}
+      </span>
+    </Tooltip>
+  );
+}
 
 export function StatusPill({ status }: { status: string }) {
   const cls: Record<string, string> = {

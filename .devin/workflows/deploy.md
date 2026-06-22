@@ -105,8 +105,7 @@ Capture the printed admin and tracker `*.workers.dev` URLs.
 Manual. In the dashboard:
 
 - `newsletter@yourdomain.com` → Send to Worker `newsletter-ingest`
-- catch-all → Send to Worker `newsletter-bounce` (the worker filters
-  `bounce+*` itself)
+- catch-all → Send to Worker `newsletter-bounce` (handles one-click email unsubscribes)
 
 ## 10. Bind tracker to custom hostname
 

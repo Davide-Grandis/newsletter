@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 // Shared page size for every paginated table in the app.
-export const PAGE_SIZE = 20;
+export const PAGE_SIZE = 15;
 
 // Cloudflare-style page window: up to 5 numbered buttons centred on the current
 // page, clamped to the available range.

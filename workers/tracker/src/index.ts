@@ -104,7 +104,8 @@ export default {
           .prepare('SELECT n.name, s.email FROM subscribers s JOIN newsletters n ON n.id = s.newsletter_id WHERE s.id = ?')
           .bind(sub)
           .first<{ name: string; email: string }>();
-        return htmlResponse(unsubPage(sub, token, nlRow?.name ?? 'this newsletter', nlRow?.email ?? '', siteKey, null));
+        const campaignId = url.searchParams.get('c') || null;
+        return htmlResponse(unsubPage(sub, token, nlRow?.name ?? 'this newsletter', nlRow?.email ?? '', siteKey, null, campaignId));
       }
       if (req.method === 'POST') {
         const form = await req.formData().catch(() => null);
@@ -113,6 +114,8 @@ export default {
         if (!ok) return new Response('forbidden', { status: 403 });
         // RFC 8058 one-click: mail client posts List-Unsubscribe=One-Click — skip Turnstile.
         const isOneClick = form ? String(form.get('List-Unsubscribe') ?? '') === 'One-Click' : false;
+        // Campaign ID: prefer form body (browser submit), fall back to query string (one-click).
+        const unsubCampaignId = (form ? String(form.get('c') ?? '') : '') || url.searchParams.get('c') || null;
         if (!isOneClick) {
           const cfg = await loadSettings(env.DB, env);
           const turnstileEnabled = (cfg.TURNSTILE_ENABLED ?? 'true') !== 'false';
@@ -125,7 +128,7 @@ export default {
                 .prepare('SELECT n.name, s.email FROM subscribers s JOIN newsletters n ON n.id = s.newsletter_id WHERE s.id = ?')
                 .bind(sub)
                 .first<{ name: string; email: string }>();
-              return htmlResponse(unsubPage(sub, t, nlRow?.name ?? 'this newsletter', nlRow?.email ?? '', siteKey, 'Verification failed. Please try again.'), 400);
+              return htmlResponse(unsubPage(sub, t, nlRow?.name ?? 'this newsletter', nlRow?.email ?? '', siteKey, 'Verification failed. Please try again.', unsubCampaignId), 400);
             }
           }
         }
@@ -134,10 +137,9 @@ export default {
           .bind(sub)
           .first<{ newsletter_id: string; name: string; email: string }>();
         await env.DB
-          .prepare("UPDATE subscribers SET status='unsubscribed', unsubscribed_at=datetime('now') WHERE id = ?")
+          .prepare("UPDATE subscribers SET status='unsubscribed', verified=0, unsubscribed_at=datetime('now') WHERE id = ?")
           .bind(sub)
           .run();
-        const unsubCampaignId = url.searchParams.get('c') || null;
         ctx.waitUntil(logEvent(env, 'unsubscribe', unsubCampaignId, sub, req, null, null, nlRow?.newsletter_id ?? null).catch(console.error));
         if (isOneClick) return new Response('', { status: 200 });
         return htmlResponse(unsubSuccessPage(nlRow?.name ?? 'this newsletter', nlRow?.email ?? ''));
@@ -254,7 +256,9 @@ async function handleSubscribe(
           "VALUES (?, ?, ?, 0, 'active', ?, ?) " +
           'ON CONFLICT(newsletter_id, email) DO UPDATE SET ' +
           'confirm_token = excluded.confirm_token, ' +
-          'name = COALESCE(NULLIF(excluded.name, ?), subscribers.name)',
+          'name = COALESCE(NULLIF(excluded.name, ?), subscribers.name), ' +
+          "status = CASE WHEN subscribers.status = 'unsubscribed' THEN 'active' ELSE subscribers.status END, " +
+          "verified = CASE WHEN subscribers.status = 'unsubscribed' THEN 0 ELSE subscribers.verified END",
       )
       .bind(nl.id, email, name || null, unsubToken, confirmToken, '')
       .run();
@@ -518,20 +522,6 @@ async function logEvent(
       req.headers.get('cf-connecting-ip'),
     )
     .run();
-  const messages: Record<string, string> = {
-    open: `Subscriber ${subscriberId} opened campaign`,
-    click: `Subscriber ${subscriberId} clicked link`,
-    download: `Subscriber ${subscriberId} downloaded attachment`,
-    unsubscribe: `Subscriber ${subscriberId} unsubscribed`,
-  };
-  await writeLog(env.DB, {
-    source: 'tracker',
-    event: `tracker.${type}`,
-    campaignId,
-    newsletterId,
-    message: messages[type] ?? type,
-    detail: { subscriberId, url: url ?? undefined, attachmentId: attachmentId ?? undefined },
-  });
 }
 
 function unsubSuccessPage(newsletterName: string, email: string): string {
@@ -545,7 +535,7 @@ function unsubSuccessPage(newsletterName: string, email: string): string {
     `</main></body></html>`;
 }
 
-function unsubPage(sub: number, token: string, newsletterName: string, email: string, siteKey: string, error: string | null): string {
+function unsubPage(sub: number, token: string, newsletterName: string, email: string, siteKey: string, error: string | null, campaignId: string | null = null): string {
   const name = escapeHtml(newsletterName);
   const safeEmail = escapeHtml(email);
   const err = error ? `<p class="err">${escapeHtml(error)}</p>` : '';
@@ -555,6 +545,7 @@ function unsubPage(sub: number, token: string, newsletterName: string, email: st
   const tsWidget = siteKey
     ? `<div class="cf-turnstile" data-sitekey="${escapeAttr(siteKey)}"></div>`
     : '';
+  const cField = campaignId ? `<input type="hidden" name="c" value="${escapeAttr(campaignId)}">` : '';
   return `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>Unsubscribe from ${name}</title>${PAGE_CSS}${tsScript}</head>` +
@@ -562,7 +553,7 @@ function unsubPage(sub: number, token: string, newsletterName: string, email: st
     `<p class="muted">You are about to unsubscribe${safeEmail ? ` <strong>${safeEmail}</strong>` : ''} from <strong>${name}</strong>.</p>` +
     `${err}` +
     `<form method="post" action="/u/${sub}">` +
-    `<input type="hidden" name="t" value="${escapeAttr(token)}">` +
+    `<input type="hidden" name="t" value="${escapeAttr(token)}">${cField}` +
     `${tsWidget}` +
     `<button type="submit" class="danger">Unsubscribe</button>` +
     `</form></main></body></html>`;

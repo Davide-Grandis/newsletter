@@ -54,6 +54,16 @@ CREATE TABLE IF NOT EXISTS subscribers (
   subscribed_at   TEXT NOT NULL DEFAULT (datetime('now')),
   unsubscribed_at TEXT,
   bounce_count    INTEGER NOT NULL DEFAULT 0,
+  -- Split counters: hard (permanent, 5.x.x / mailbox-not-found) disable on
+  -- HARD_BOUNCE_THRESHOLD; soft (transient, 4.x.x / full mailbox) only disable
+  -- on SOFT_BOUNCE_THRESHOLD within SOFT_BOUNCE_WINDOW_DAYS and reset on a
+  -- successful delivery. `bounce_count` stays as the combined lifetime total.
+  hard_bounce_count INTEGER NOT NULL DEFAULT 0,
+  soft_bounce_count INTEGER NOT NULL DEFAULT 0,
+  -- Classification of the most recent bounce, for the UI: 'hard' | 'soft' |
+  -- 'block', plus the raw RFC 3463 status code (e.g. '5.1.1').
+  last_bounce_type  TEXT CHECK (last_bounce_type IN ('hard','soft','block')),
+  last_bounce_code  TEXT,
   last_bounce_at  TEXT,
   token           TEXT NOT NULL,
   -- Double opt-in token, separate from `token` (the unsubscribe token). Set
@@ -103,7 +113,7 @@ CREATE TABLE IF NOT EXISTS sends (
   campaign_id    TEXT NOT NULL REFERENCES campaigns(id) ON DELETE CASCADE,
   subscriber_id  INTEGER NOT NULL REFERENCES subscribers(id) ON DELETE CASCADE,
   status         TEXT NOT NULL DEFAULT 'pending'
-                   CHECK (status IN ('pending','sent','failed')),
+                   CHECK (status IN ('pending','sent','failed','bounced')),
   queued_at      TEXT NOT NULL DEFAULT (datetime('now')),
   sent_at        TEXT,
   error          TEXT,
@@ -111,6 +121,19 @@ CREATE TABLE IF NOT EXISTS sends (
   UNIQUE (campaign_id, subscriber_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sends_campaign_status ON sends(campaign_id, status);
+
+-- Global post-send bounce-check counter. The GraphQL delivery-failure query is
+-- zone-wide (covers every campaign at once), so a single counter — not a
+-- per-campaign schedule — drives the bounce worker. Whenever a campaign sends,
+-- the worker tops `checks_to_go` back up to 18 (capped). The cron (every 10
+-- min) runs one zone-wide sync while the counter is > 0 and decrements it,
+-- giving ~3 hours of fast bounce coverage after the last send.
+CREATE TABLE IF NOT EXISTS bounce_check_state (
+  id           INTEGER PRIMARY KEY CHECK (id = 1),
+  checks_to_go INTEGER NOT NULL DEFAULT 0,
+  updated_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+INSERT OR IGNORE INTO bounce_check_state (id, checks_to_go) VALUES (1, 0);
 
 CREATE TABLE IF NOT EXISTS events (
   id             INTEGER PRIMARY KEY AUTOINCREMENT,

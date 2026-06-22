@@ -14,5 +14,6 @@ database_id = "REPLACE_WITH_D1_ID"
 binding = "ARCHIVE"
 bucket_name = "newsletter-archive"
 
+# Runs once daily at 04:00 UTC to purge campaigns older than RETENTION_DAYS.
 [triggers]
-crons = ["0 4 * * *"]   # daily at 04:00 UTC
+crons = ["0 4 * * *"]

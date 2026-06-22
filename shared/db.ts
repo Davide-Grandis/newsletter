@@ -193,6 +193,8 @@ export async function writeLog(db: D1Database, e: LogEntry): Promise<void> {
         : typeof e.detail === 'string'
           ? e.detail
           : JSON.stringify(e.detail);
+    const prefix = `${e.source}.`;
+    const event = e.event.startsWith(prefix) ? e.event.slice(prefix.length) : e.event;
     await db
       .prepare(
         'INSERT INTO logs (level, source, event, campaign_id, newsletter_id, message, detail) ' +
@@ -201,7 +203,7 @@ export async function writeLog(db: D1Database, e: LogEntry): Promise<void> {
       .bind(
         e.level ?? 'info',
         e.source,
-        e.event,
+        event,
         e.campaignId ?? null,
         e.newsletterId ?? null,
         e.message ?? null,

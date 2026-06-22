@@ -165,9 +165,7 @@ multipart/mixed
 
 Plus headers: `Message-ID`, `List-Unsubscribe` (with both URL and mailto),
 `List-Unsubscribe-Post: List-Unsubscribe=One-Click` (RFC 8058 — required
-by Gmail/Yahoo bulk-sender rules), and a VERP `Return-Path:
-bounce+<campaignId>.<subscriberId>@<BASE_DOMAIN>` so the bounce worker
-can attribute DSNs.
+by Gmail/Yahoo bulk-sender rules).
 
 **5. Send.**
 
@@ -290,60 +288,58 @@ with body `List-Unsubscribe=One-Click` directly when the user clicks the
 
 ### Purpose
 
-When a remote MTA rejects one of our messages, the DSN comes back to the
-VERP `Return-Path` we stamped (`bounce+<campaignId>.<subscriberId>@`).
-This worker classifies the bounce, increments per-subscriber counters,
-suppresses bad addresses past threshold, and archives the raw DSN for
-audit.
+Two responsibilities: (1) process `List-Unsubscribe` mailto replies from
+subscribers, and (2) periodically query the Cloudflare Email Sending
+GraphQL API for delivery failures and record them as bounces.
 
-### How attribution works
+### Email handler — mailto unsubscribes
 
-The consumer set:
+The bounce worker is the catch-all inbound route. Inbound mail addressed
+to `unsubscribe+<subscriberId>@<domain>` (advertised in `List-Unsubscribe`
+headers by the consumer) is handled here:
 
-```
-Return-Path: <bounce+<campaignId>.<subscriberId>@yourdomain.com>
-```
+1. Match `unsubscribe+(⧘+)@` in `message.to`.
+2. `UPDATE subscribers SET status='unsubscribed'` where `id = <sub> AND status = 'active'`.
+3. If a row changed, insert `events(type='unsubscribe')`.
 
-Email Routing's wildcard rule `bounce+*@yourdomain.com → newsletter-bounce`
-delivers the DSN to this worker with that exact address in `message.to`,
-which the worker parses with a regex to extract `campaignId` and
-`subscriberId`. Envelope-based attribution is the only reliable method —
-DSN bodies vary wildly across providers.
+All other inbound mail is silently dropped (no state mutation).
 
-### Step by step
+### Scheduled handler — GraphQL delivery-failure sync
 
-1. **Archive raw** to R2 under `bounces/YYYY-MM-DD/<uuid>.eml` so the
-   classification can be re-run later if the rules change.
-2. **Parse** with `postal-mime` and concatenate text + html bodies for
-   pattern matching.
-3. **Classify** by pulling the RFC 3463 enhanced status (`Status: X.Y.Z`):
-   - `5.x.x` → hard bounce (permanent)
-   - anything else → soft bounce (transient)
-   - free-text fallback for providers that omit `Status:`.
-4. **Increment** `subscribers.bounce_count` and update `last_bounce_at`.
-5. **Suppress** by flipping `status='bounced'` once `bounce_count >=
-   HARD_BOUNCE_THRESHOLD` (default 1, so any hard bounce sticks
-   immediately) or `>= SOFT_BOUNCE_THRESHOLD` (default 5). Once flipped,
-   the `iterateActiveSubscribers` generator silently drops them from
-   every future campaign.
-6. **Log** an `events(type='bounce')` row with the status code so the
-   admin worker's stats query lights up.
+The `emailSendingAdaptive` GraphQL query is **zone-wide** (it returns delivery
+failures for every campaign at once), so the worker uses a single global
+counter — `bounce_check_state.checks_to_go` — rather than a per-campaign
+schedule. The cron fires every **10 minutes**. Each tick:
+
+1. **Top up**: if any campaign sent within the last ~15 min, reset
+   `checks_to_go` to **18** (capped — never higher). A still-sending campaign
+   keeps the counter topped up; the 3-hour countdown begins once sending stops.
+2. **Sync**: if `checks_to_go > 0`, or once daily at 04:00 UTC, call
+   `syncDeliveryEvents` (one zone-wide sync covers all campaigns).
+3. **Decrement**: if `checks_to_go > 0`, subtract 1. 18 checks × 10 min ≈ 3 h.
+
+`syncDeliveryEvents` queries `emailSendingAdaptive` (GraphQL) for
+`deliveryFailed` events in the last 25 hours, matches each to a `sends`
+row by recipient email, classifies hard vs soft from the SMTP error code,
+then:
+
+- Increments `bounce_count` / `hard_bounce_count` / `soft_bounce_count`.
+- Flips `status='bounced'` once `hard_bounce_count >= HARD_BOUNCE_THRESHOLD`.
+- Updates the `sends` row to `status='bounced'`.
+- Inserts `events(type='bounce')`.
 
 ### Why these decisions
 
-- **VERP, not body parsing, for attribution**: robust across providers.
-- **Hard threshold = 1**: a 5.x.x is by definition permanent; one is
-  enough.
+- **GraphQL API, not inbound DSN routing**: Cloudflare Email Service does
+  not honour a custom `Return-Path` header (it is platform-controlled),
+  so VERP-based DSN attribution is not possible. The GraphQL API is the
+  authoritative source of delivery failures.
+- **Hard threshold = 1**: a permanent 5.x.x failure means the address is
+  bad; one strike is enough.
 - **Soft threshold = 5**: gives a few campaigns of grace before declaring
-  a soft-bouncer dead.
-- **No-op when VERP doesn't match**: any random misdirected mail to the
-  bounce address gets archived but doesn't mutate subscriber state.
-
-### Extension points
-
-- Detect FBL (Feedback Loop / ARF) reports and flip
-  `status='complained'`.
-- Re-classify archived DSNs in R2 if rules evolve.
+  a transient-bouncer dead.
+- **Post-send burst + daily fallback**: fast bounces are caught within the
+  first 3 hours after each send; the daily sync catches slow/delayed ones.
 
 ---
 

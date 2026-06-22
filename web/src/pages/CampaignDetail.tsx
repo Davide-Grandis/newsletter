@@ -9,6 +9,7 @@ import { useState, type ReactNode } from 'react';
 import { RefreshIcon } from './Dashboard';
 import { useIdentity } from '../auth';
 import { ConfirmDialog } from '../components/ConfirmDialog';
+import { fmtDate } from '../utils/date';
 
 export default function CampaignDetail() {
   const { id = '' } = useParams();
@@ -169,7 +170,7 @@ function pivotTimeseries(rows: TimeseriesRow[]): Record<string, number | string>
 }
 
 function SendsTable({ campaignId }: { campaignId: string }) {
-  const [status, setStatus] = useState('failed');
+  const [status, setStatus] = useState('');
   const [page, setPage] = useState(0);
   const sends = useQuery({
     queryKey: ['campaign-sends', campaignId, status, page],
@@ -192,6 +193,7 @@ function SendsTable({ campaignId }: { campaignId: string }) {
           <option value="">All</option>
           <option value="sent">Sent</option>
           <option value="failed">Failed</option>
+          <option value="bounced">Bounced</option>
           <option value="queued">Queued</option>
         </select>
       </div>
@@ -210,7 +212,7 @@ function SendsTable({ campaignId }: { campaignId: string }) {
               <tr key={s.id} className="border-t border-slate-100 dark:border-slate-800">
                 <td className="p-2 font-mono text-xs">{s.email ?? `#${s.subscriber_id}`}</td>
                 <td className="p-2"><StatusPill status={s.status} /></td>
-                <td className="p-2 text-slate-500 dark:text-slate-400">{s.sent_at ?? '—'}</td>
+                <td className="p-2 text-slate-500 dark:text-slate-400">{s.sent_at ? fmtDate(s.sent_at) : '—'}</td>
                 <td className="p-2 text-red-700 text-xs dark:text-red-400">{s.error ?? ''}</td>
               </tr>
             ))}

@@ -179,6 +179,59 @@ The footer always contains an **unsubscribe link** (in addition to the
   is added *after* tracking instrumentation, so its links are **not**
   click-tracked.
 
+## Bounces
+
+### Detection
+
+The platform (Cloudflare Email Sending) accepts outgoing messages asynchronously — `env.SEND_EMAIL.send()` resolves successfully even for invalid addresses, because the actual delivery attempt happens after the Worker returns. There is no synchronous delivery status.
+
+Bounce detection runs in the bounce worker (cron every 10 minutes) using Cloudflare's **GraphQL Analytics API** (`emailSendingAdaptive` dataset). Each sync fetches all `deliveryFailed` events from the past 25 hours and matches them against the `sends` table by recipient email address. The query is **zone-wide** — one sync covers every campaign at once — so the worker uses a single global counter rather than tracking each campaign separately.
+
+Syncs are triggered two ways:
+
+1. **Post-send burst** — whenever a campaign sends, the global counter (`checks_to_go`) is reset to **18** (capped, never higher). Each 10-minute tick where the counter is positive runs one sync and decrements it — i.e. **18 checks over ~3 hours** of coverage. This catches the bulk of bounces (which surface within minutes to a couple of hours) without waiting for the next day. A still-sending campaign keeps the counter topped up, so the 3-hour countdown only begins once sending activity stops.
+2. **Daily safety net** — a full sync runs once per day (~04:00 UTC) regardless of the counter, catching slow or delayed bounces that arrive after the burst window (some receiving servers retry for up to 24 h before giving up).
+
+Together these give close to complete bounce coverage.
+
+For each matched failure:
+1. The subscriber's bounce counters (`bounce_count`, `hard_bounce_count` / `soft_bounce_count`) are incremented.
+2. The `sends` record is updated to `status = 'bounced'` with the error detail stored in the `error` field.
+3. A `bounce` event is inserted (visible on the campaign's Logs page and the Bounces page).
+4. If `hard_bounce_count` reaches the threshold (`HARD_BOUNCE_THRESHOLD`, default 1), the subscriber's status is set to **bounced** and they are excluded from future sends.
+
+### Classification
+
+Bounces are classified as **hard** (permanent failure) or **soft** (transient failure) using the following priority:
+
+1. **SMTP reply code** extracted from `errorDetail` (e.g. `550`, `421`):
+   - `5xx` → hard
+   - `4xx` → soft
+2. **Enhanced status code** extracted from `errorDetail` (e.g. `5.1.1`, `4.2.2`) — used for display and logging only; classification uses the 3-digit code above.
+3. **`errorCause` pattern match** (Cloudflare-assigned string) — if no numeric code is present, keywords like `temp`, `timeout`, `quota`, `full`, `defer` → soft; everything else → hard.
+
+### Most common SMTP and enhanced status codes
+
+**SMTP reply code** ([RFC 5321](https://www.rfc-editor.org/rfc/rfc5321), 3-digit) · **Enhanced status code** ([RFC 3463](https://www.rfc-editor.org/rfc/rfc3463), `class.subject.detail`)
+
+| SMTP | Enhanced | Enhanced detail | Class | Meaning |
+|:----:|:--------:|-----------------|:-----:|---------|
+| 421 | 4.3.2 | 4 = transient failure<br>3 = mail system<br>2 = system not accepting network messages | **Soft** | Service temporarily unavailable; try again later. |
+| 450 | 4.2.1 | 4 = transient failure<br>2 = mailbox<br>1 = mailbox disabled, not accepting messages | **Soft** | Mailbox temporarily unavailable. |
+| 451 | 4.3.0 | 4 = transient failure<br>3 = mail system<br>0 = other / undefined status | **Soft** | Requested action aborted — local processing error at the receiving server. |
+| 452 | 4.2.2 | 4 = transient failure<br>2 = mailbox<br>2 = mailbox full | **Soft** | Insufficient system storage at the receiving server. |
+| 550 | 5.1.1 | 5 = permanent failure<br>1 = addressing<br>1 = bad destination mailbox address | **Hard** | Mailbox does not exist. The most common permanent bounce — the address is invalid. |
+| 550 | 5.1.2 | 5 = permanent failure<br>1 = addressing<br>2 = bad destination system address | **Hard** | Bad destination mailbox address. |
+| 550 | 5.2.1 | 5 = permanent failure<br>2 = mailbox<br>1 = mailbox disabled | **Hard** | Mailbox disabled; not accepting messages. |
+| 550 | 5.5.1 | 5 = permanent failure<br>5 = mail delivery protocol<br>1 = invalid command | **Hard** | Invalid SMTP command (protocol error). In practice also returned when the destination domain does not exist (e.g. a misspelled domain) — the DNS lookup fails and the sending server receives a protocol-level error in response. Consider investigating rather than automatically suppressing the subscriber. |
+| 550 | 5.7.1 | 5 = permanent failure<br>7 = security or policy<br>1 = delivery not authorised | **Hard** | Delivery not authorised. The receiving server's policy rejected the message (spam, DMARC failure, blocklist). |
+| 551 | 5.1.6 | 5 = permanent failure<br>1 = addressing<br>6 = destination mailbox has moved, no forwarding address | **Hard** | User not local; forwarding not permitted. |
+| 552 | 5.2.2 | 5 = permanent failure<br>2 = mailbox<br>2 = mailbox full | **Soft** | Mailbox full / over quota. Transient — the address exists but cannot receive right now. |
+| 553 | 5.1.3 | 5 = permanent failure<br>1 = addressing<br>3 = bad destination mailbox address syntax | **Hard** | Bad destination mailbox syntax. |
+| 554 | 5.7.0 | 5 = permanent failure<br>7 = security or policy<br>0 = other / undefined security status | **Hard** | Transaction failed; message rejected for policy reasons. |
+
+Cloudflare may also return a string `errorCause` without a numeric code (e.g. `mailbox_gmail_unknown`, `unknown`). These are treated as **hard** unless the string contains a recognised transient keyword.
+
 ## Data retention & cleanup
 
 A daily cleanup cron enforces the **Retention (days)** setting
@@ -218,13 +271,7 @@ they match the Cloudflare zone described under *Requirements*. Open the
   inbound mail on. Saving it auto-resolves the Email Routing zone (see below);
   it has no default and is stored only in the database.
 - **Tracking base URL** — the tracker worker's base URL (opens, clicks,
-  unsubscribe, downloads). VERP bounce return-path addresses reuse the sending
-  domain, so there is no separate bounce-domain setting. When the sending domain
-  is saved, the console auto-creates the `bounce@<domain>` Email Routing rule.
-  **One-time:** enable Email Routing **Subaddressing** for the domain in the
-  Cloudflare dashboard (Compute → Email Service → Email Routing → Settings) — it
-  cannot be set via API, and without it the `bounce+<id>@<domain>` VERP
-  addresses won't reach the bounce worker.
+  unsubscribe, downloads).
 - **Ingest worker name** — the worker the auto-managed Email Routing rules
   forward inbound mail to.
 - **Public signup (optional)** — to offer the hosted subscribe page (see *Public
